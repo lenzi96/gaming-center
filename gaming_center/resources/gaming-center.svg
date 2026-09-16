@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bodyGrad" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00d494"/>
+      <stop offset="100%" stop-color="#008f66"/>
+    </linearGradient>
+    <linearGradient id="btnGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1e293b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+  <!-- Controller Body -->
+  <rect x="16" y="32" width="96" height="64" rx="24" fill="url(#bodyGrad)" filter="drop-shadow(0px 8px 16px rgba(0,0,0,0.5))"/>
+  <!-- Grips -->
+  <rect x="22" y="58" width="24" height="42" rx="12" fill="#007352"/>
+  <rect x="82" y="58" width="24" height="42" rx="12" fill="#007352"/>
+  <!-- D-Pad -->
+  <rect x="35" y="52" width="6" height="20" rx="2" fill="#0a0e14"/>
+  <rect x="28" y="59" width="20" height="6" rx="2" fill="#0a0e14"/>
+  <!-- Action Buttons -->
+  <circle cx="88" cy="55" r="4" fill="#00d2ff"/>
+  <circle cx="96" cy="63" r="4" fill="#f59e0b"/>
+  <circle cx="80" cy="63" r="4" fill="#ef4444"/>
+  <circle cx="88" cy="71" r="4" fill="#a855f7"/>
+  <!-- Center Power Button -->
+  <circle cx="64" cy="64" r="8" fill="#ffffff" opacity="0.9"/>
+  <circle cx="64" cy="64" r="4" fill="#0a0e14"/>
+</svg>

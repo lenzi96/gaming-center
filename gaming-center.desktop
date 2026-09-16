@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Gaming Center
+GenericName=Game Service Center
+Comment=Linux Spiele Service Center mit PCGamingWiki Anbindung
+Exec=gaming-center
+Icon=gaming-center
+Terminal=false
+Type=Application
+Categories=Game;Utility;Settings;
+StartupWMClass=gaming-center
+Keywords=game;steam;proton;wine;pcgw;pcgamingwiki;savegame;backup;tuning;

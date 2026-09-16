@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Standalone launcher for Gaming Center
+
+INSTALL_DIR="$HOME/.local/share/gaming-center"
+DEV_DIR="/run/media/julian/HDD/Linux/gaming-center"
+
+if [ -n "$GAMING_CENTER_DEV_DIR" ] && [ -d "$GAMING_CENTER_DEV_DIR" ]; then
+    APP_DIR="$GAMING_CENTER_DEV_DIR"
+elif [ -d "$INSTALL_DIR" ]; then
+    APP_DIR="$INSTALL_DIR"
+elif [ -d "$DEV_DIR" ]; then
+    APP_DIR="$DEV_DIR"
+elif [ -d "/usr/share/gaming-center" ]; then
+    APP_DIR="/usr/share/gaming-center"
+else
+    echo "Fehler: Gaming Center Installation nicht gefunden." >&2
+    exit 1
+fi
+
+export PYTHONPATH="$APP_DIR:$PYTHONPATH"
+exec python3 "$APP_DIR/main.py" "$@"

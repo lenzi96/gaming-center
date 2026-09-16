@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gaming-center"
+version = "1.0.0"
+description = "Linux Game Service Center mit PCGamingWiki Integration"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "PyQt6>=6.4.0",
+]
+
+[project.scripts]
+gaming-center = "gaming_center.app:main"
