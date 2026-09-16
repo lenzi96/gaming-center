@@ -218,6 +218,25 @@ class UpdateCheckerWorker(QThread):
                         info.app_has_update = cmp_res < 0
 
         except urllib.error.HTTPError as err:
+            # If releases/latest returns 404, check if tags exist on GitHub
+            if err.code == 404:
+                try:
+                    tags_url = f"https://api.github.com/repos/{gh_repo}/tags"
+                    t_req = urllib.request.Request(tags_url, headers=headers)
+                    with urllib.request.urlopen(t_req, timeout=10) as t_resp:
+                        t_data = json.loads(t_resp.read().decode())
+                        if t_data and isinstance(t_data, list):
+                            tag_name = t_data[0].get("name", "")
+                            info.app_remote = tag_name.lstrip("v").strip()
+                            info.github_tarball_url = t_data[0].get("tarball_url", "")
+                            info.github_release_url = f"https://github.com/{gh_repo}/releases/tag/{tag_name}"
+                            cmp_res = compare_versions(info.app_installed, info.app_remote)
+                            info.app_has_update = cmp_res < 0
+                            self.finished.emit(info)
+                            return
+                except Exception:
+                    pass
+
             if err.code in (401, 403, 404):
                 info.github_auth_error = True
                 if not gh_token:
@@ -375,6 +394,19 @@ def download_and_install_release(
                 if not tarball_url:
                     tarball_url = data.get("tarball_url", "")
         except Exception as e:
+            # Fallback: check git tags if release endpoint returns 404
+            try:
+                tags_url = f"https://api.github.com/repos/{repo}/tags"
+                t_req = urllib.request.Request(tags_url, headers=headers)
+                with urllib.request.urlopen(t_req, timeout=10) as t_resp:
+                    t_data = json.loads(t_resp.read().decode())
+                    if t_data and isinstance(t_data, list):
+                        tag_name = t_data[0].get("name", "")
+                        version = version or tag_name.lstrip("v").strip()
+                        tarball_url = t_data[0].get("tarball_url", "")
+            except Exception:
+                pass
+
             if not (asset_url or tarball_url):
                 print(f"[FEHLER] Konnte Release-Informationen von GitHub nicht abrufen: {e}")
                 return 1
@@ -396,6 +428,8 @@ def download_and_install_release(
         if not download_url:
             download_url = f"https://github.com/{repo}/releases/download/v{version}/gaming-center-v{version}.tar.gz"
 
+        is_api_asset = bool(asset_url and "releases/assets" in (download_url or ""))
+
         print("[1/4] Lade Release-Paket herunter...")
         curl_bin = shutil.which("curl")
         download_ok = False
@@ -404,7 +438,9 @@ def download_and_install_release(
             curl_cmd = [curl_bin, "-sSL", "-f"]
             if token:
                 curl_cmd.extend(["-H", f"Authorization: Bearer {token}"])
-            curl_cmd.extend(["-H", "Accept: application/octet-stream", download_url, "-o", tar_path])
+            if is_api_asset:
+                curl_cmd.extend(["-H", "Accept: application/octet-stream"])
+            curl_cmd.extend([download_url, "-o", tar_path])
             res = subprocess.run(curl_cmd, check=False)
             if res.returncode == 0 and os.path.exists(tar_path) and os.path.getsize(tar_path) > 1000:
                 download_ok = True
@@ -419,8 +455,9 @@ def download_and_install_release(
 
             opener = urllib.request.build_opener(NoAuthRedirect)
             headers = {"User-Agent": "Gaming-Center"}
-            if token and "api.github.com" in download_url:
+            if token and ("api.github.com" in download_url or "github.com" in download_url):
                 headers["Authorization"] = f"Bearer {token}"
+            if is_api_asset:
                 headers["Accept"] = "application/octet-stream"
             req = urllib.request.Request(download_url, headers=headers)
             try:
