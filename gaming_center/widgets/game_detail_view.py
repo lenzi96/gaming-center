@@ -29,7 +29,7 @@ from ..backend.game_scanner import GameInfo
 from ..backend.pcgw_client import PCGWClient, PCGWData, PCGWDownload
 from ..backend.path_resolver import PathResolver, ResolvedPath
 from ..backend.savegame_manager import SavegameManager, BackupInfo
-from ..backend.launch_builder import LaunchOptionBuilder, LaunchConfig
+from ..backend.launch_builder import LaunchOptionBuilder, LaunchConfig, PRESET_DEFINITIONS
 from ..backend.translator import Translator
 from .download_dialog import DownloadDialog
 from ..style.theme import ThemeColors
@@ -284,6 +284,9 @@ class GameDetailView(QWidget):
 
         # Refresh backups list
         self._refresh_backups_table()
+
+        # Load game tuning profile
+        self._load_game_tuning_profile(game.app_id)
 
     def _clear_dynamic_views(self):
         # Clear paths tab
@@ -934,88 +937,612 @@ class GameDetailView(QWidget):
     # TAB 4: TUNING & LAUNCH OPTIONS
     # -------------------------------------------------------------
     def _setup_tab_tuning(self):
-        layout = QVBoxLayout(self.tab_tuning)
+        root_layout = QVBoxLayout(self.tab_tuning)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(14)
 
-        # Performance Wrappers
-        wrappers_box = QFrame()
-        wrappers_box.setStyleSheet(f"background-color: {ThemeColors.BG_CARD}; border-radius: 8px; padding: 10px;")
-        wb_layout = QVBoxLayout(wrappers_box)
+        self._is_updating_ui = False
 
-        self.cb_gamemode = QCheckBox("GameMode aktivieren (gamemoderun %command%)")
+        # --- 1. Quick Presets Card ---
+        preset_box = QFrame()
+        preset_box.setStyleSheet(f"background-color: {ThemeColors.BG_CARD}; border: 1px solid {ThemeColors.BORDER_CARD}; border-radius: 8px; padding: 12px;")
+        ps_layout = QVBoxLayout(preset_box)
+        ps_layout.setSpacing(8)
+
+        ps_header = QHBoxLayout()
+        lbl_ps_title = QLabel("🚀 Schnell-Profile & Voreinstellungen (Presets):")
+        lbl_ps_title.setStyleSheet(f"font-size: 13px; font-weight: 800; color: {ThemeColors.ACCENT_GREEN};")
+        ps_header.addWidget(lbl_ps_title)
+        ps_header.addStretch()
+
+        self.combo_preset = QComboBox()
+        self.combo_preset.addItem("⚡ Standard (Ausgewogen)", "balanced")
+        self.combo_preset.addItem("🚀 Maximale Performance", "max_performance")
+        self.combo_preset.addItem("🟢 NVIDIA RTX & DLSS", "nvidia_rtx")
+        self.combo_preset.addItem("🔴 AMD Radeon Optimiert", "amd_radeon")
+        self.combo_preset.addItem("📺 Gamescope FSR Upscaler", "gamescope_fsr")
+        self.combo_preset.addItem("🔋 Akkusparend / Handheld (60 FPS)", "handheld_battery")
+        self.combo_preset.addItem("🕹️ Retro & 32-Bit Kompatibilität", "retro_compat")
+        self.combo_preset.addItem("🔍 Absturz-Diagnose & Logging", "debug_crash")
+        self.combo_preset.addItem("🛠️ Benutzerdefiniert (Custom)", "custom")
+        self.combo_preset.currentIndexChanged.connect(self._on_preset_changed)
+        ps_header.addWidget(self.combo_preset)
+        ps_layout.addLayout(ps_header)
+
+        self.lbl_preset_desc = QLabel("Standardeinstellungen mit aktivem GameMode für flüssiges Gaming.")
+        self.lbl_preset_desc.setStyleSheet(f"font-size: 11px; color: {ThemeColors.TEXT_SECONDARY};")
+        self.lbl_preset_desc.setWordWrap(True)
+        ps_layout.addWidget(self.lbl_preset_desc)
+
+        layout.addWidget(preset_box)
+
+        # --- 2. Performance Wrappers Card ---
+        wrappers_box = QFrame()
+        wrappers_box.setStyleSheet(f"background-color: {ThemeColors.BG_CARD}; border: 1px solid {ThemeColors.BORDER_CARD}; border-radius: 8px; padding: 12px;")
+        wb_layout = QVBoxLayout(wrappers_box)
+        wb_layout.setSpacing(8)
+
+        wb_title = QLabel("📦 Performance-Wrapper & System-Priorität:")
+        wb_title.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {ThemeColors.ACCENT_CYAN};")
+        wb_layout.addWidget(wb_title)
+
+        self.cb_gamemode = QCheckBox("GameMode aktivieren (gamemoderun - optimiert CPU-Governor, I/O und GPU-Takt)")
         self.cb_gamemode.setChecked(True)
-        self.cb_gamemode.stateChanged.connect(self._update_launch_preview)
+        self.cb_gamemode.stateChanged.connect(self._on_tuning_control_changed)
         wb_layout.addWidget(self.cb_gamemode)
 
-        self.cb_mangohud = QCheckBox("MangoHud Overlay aktivieren (mangohud %command%)")
-        self.cb_mangohud.stateChanged.connect(self._update_launch_preview)
+        self.cb_mangohud = QCheckBox("MangoHud Hardware- & FPS-Overlay (mangohud - zeigt FPS, Frametimes, CPU/GPU)")
+        self.cb_mangohud.stateChanged.connect(self._on_tuning_control_changed)
         wb_layout.addWidget(self.cb_mangohud)
+
+        self.cb_prime_run = QCheckBox("Dedizierte GPU für Hybrid-Grafik / Laptops erzwingen (prime-run)")
+        self.cb_prime_run.stateChanged.connect(self._on_tuning_control_changed)
+        wb_layout.addWidget(self.cb_prime_run)
+
+        self.cb_high_priority = QCheckBox("Erhöhte Prozess-Priorität für CPU-lastige Spiele (nice -n -10)")
+        self.cb_high_priority.stateChanged.connect(self._on_tuning_control_changed)
+        wb_layout.addWidget(self.cb_high_priority)
+
+        # CPU Pinning
+        pin_row = QHBoxLayout()
+        pin_lbl = QLabel("CPU-Kerne zuweisen (taskset -c):")
+        pin_lbl.setStyleSheet(f"font-size: 11px; color: {ThemeColors.TEXT_SECONDARY};")
+        self.cpu_pinning_edit = QLineEdit()
+        self.cpu_pinning_edit.setPlaceholderText("z. B. 0-15 (alle) oder 0-7 (nur P-Cores / CCD0)")
+        self.cpu_pinning_edit.textChanged.connect(self._on_tuning_control_changed)
+        pin_row.addWidget(pin_lbl)
+        pin_row.addWidget(self.cpu_pinning_edit, stretch=1)
+        wb_layout.addLayout(pin_row)
 
         layout.addWidget(wrappers_box)
 
-        # Proton & Vulkan Tweaks
-        proton_box = QFrame()
-        proton_box.setStyleSheet(f"background-color: {ThemeColors.BG_CARD}; border-radius: 8px; padding: 10px;")
-        pb_layout = QVBoxLayout(proton_box)
+        # --- 3. Gamescope Micro-Compositor Card ---
+        gs_box = QFrame()
+        gs_box.setStyleSheet(f"background-color: {ThemeColors.BG_CARD}; border: 1px solid {ThemeColors.BORDER_CARD}; border-radius: 8px; padding: 12px;")
+        gs_layout = QVBoxLayout(gs_box)
+        gs_layout.setSpacing(8)
 
-        self.cb_nvapi = QCheckBox("NVIDIA DLSS / Raytracing Support (PROTON_ENABLE_NVAPI=1)")
-        self.cb_nvapi.stateChanged.connect(self._update_launch_preview)
+        self.cb_gamescope = QCheckBox("🖥️ Gamescope Micro-Compositor & Upscaling aktivieren (gamescope)")
+        self.cb_gamescope.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {ThemeColors.ACCENT_CYAN};")
+        self.cb_gamescope.stateChanged.connect(self._on_gamescope_toggled)
+        gs_layout.addWidget(self.cb_gamescope)
+
+        self.gs_controls_frame = QFrame()
+        gs_c_layout = QVBoxLayout(self.gs_controls_frame)
+        gs_c_layout.setContentsMargins(12, 4, 4, 4)
+        gs_c_layout.setSpacing(8)
+
+        # Row 1: Mode & Upscaler
+        gs_row1 = QHBoxLayout()
+        gs_row1.addWidget(QLabel("Fenster-Modus:"))
+        self.combo_gs_mode = QComboBox()
+        self.combo_gs_mode.addItem("Vollbild (-f)", "fullscreen")
+        self.combo_gs_mode.addItem("Rahmenloses Fenster (-b)", "borderless")
+        self.combo_gs_mode.addItem("Fenster", "windowed")
+        self.combo_gs_mode.currentIndexChanged.connect(self._on_tuning_control_changed)
+        gs_row1.addWidget(self.combo_gs_mode)
+
+        gs_row1.addSpacing(16)
+        gs_row1.addWidget(QLabel("Skalierungs-Filter:"))
+        self.combo_gs_upscale = QComboBox()
+        self.combo_gs_upscale.addItem("Standard / Kein Filter", "")
+        self.combo_gs_upscale.addItem("FSR (AMD FidelityFX)", "fsr")
+        self.combo_gs_upscale.addItem("NIS (NVIDIA Image Scaling)", "nis")
+        self.combo_gs_upscale.addItem("Pixel (Integer Scaling)", "pixel")
+        self.combo_gs_upscale.addItem("Linear", "linear")
+        self.combo_gs_upscale.currentIndexChanged.connect(self._on_tuning_control_changed)
+        gs_row1.addWidget(self.combo_gs_upscale)
+        gs_row1.addStretch()
+        gs_c_layout.addLayout(gs_row1)
+
+        # Row 2: Render & Output Resolutions
+        gs_row2 = QHBoxLayout()
+        gs_row2.addWidget(QLabel("Render-Auflösung (Eingang):"))
+        self.combo_gs_render = QComboBox()
+        self.combo_gs_render.addItem("1920x1080 (Full HD)", (1920, 1080))
+        self.combo_gs_render.addItem("1280x720 (HD 720p)", (1280, 720))
+        self.combo_gs_render.addItem("2560x1440 (WQHD)", (2560, 1440))
+        self.combo_gs_render.addItem("1600x900 (900p)", (1600, 900))
+        self.combo_gs_render.addItem("1280x800 (Steam Deck)", (1280, 800))
+        self.combo_gs_render.currentIndexChanged.connect(self._on_tuning_control_changed)
+        gs_row2.addWidget(self.combo_gs_render)
+
+        gs_row2.addSpacing(16)
+        gs_row2.addWidget(QLabel("Ausgabe-Auflösung (Monitor):"))
+        self.combo_gs_output = QComboBox()
+        self.combo_gs_output.addItem("2560x1440 (WQHD 1440p)", (2560, 1440))
+        self.combo_gs_output.addItem("3840x2160 (4K UHD)", (3840, 2160))
+        self.combo_gs_output.addItem("1920x1080 (Full HD)", (1920, 1080))
+        self.combo_gs_output.addItem("3440x1440 (21:9 Ultrawide)", (3440, 1440))
+        self.combo_gs_output.currentIndexChanged.connect(self._on_tuning_control_changed)
+        gs_row2.addWidget(self.combo_gs_output)
+        gs_row2.addStretch()
+        gs_c_layout.addLayout(gs_row2)
+
+        # Row 3: Framerate limiter, FSR Sharpness, HDR
+        gs_row3 = QHBoxLayout()
+        gs_row3.addWidget(QLabel("Bildraten-Limiter (-r):"))
+        self.combo_gs_rate = QComboBox()
+        self.combo_gs_rate.addItem("Unbegrenzt / Monitor-Hz", 0)
+        self.combo_gs_rate.addItem("60 FPS", 60)
+        self.combo_gs_rate.addItem("120 FPS", 120)
+        self.combo_gs_rate.addItem("144 FPS", 144)
+        self.combo_gs_rate.addItem("165 FPS", 165)
+        self.combo_gs_rate.addItem("240 FPS", 240)
+        self.combo_gs_rate.addItem("40 FPS (Handheld)", 40)
+        self.combo_gs_rate.addItem("45 FPS (Handheld)", 45)
+        self.combo_gs_rate.currentIndexChanged.connect(self._on_tuning_control_changed)
+        gs_row3.addWidget(self.combo_gs_rate)
+
+        gs_row3.addSpacing(16)
+        gs_row3.addWidget(QLabel("FSR-Schärfe (0-20):"))
+        self.spin_gs_sharpness = QSpinBox()
+        self.spin_gs_sharpness.setRange(0, 20)
+        self.spin_gs_sharpness.setValue(5)
+        self.spin_gs_sharpness.valueChanged.connect(self._on_tuning_control_changed)
+        gs_row3.addWidget(self.spin_gs_sharpness)
+
+        gs_row3.addSpacing(16)
+        self.cb_gs_hdr = QCheckBox("HDR aktivieren (--hdr-enabled)")
+        self.cb_gs_hdr.stateChanged.connect(self._on_tuning_control_changed)
+        gs_row3.addWidget(self.cb_gs_hdr)
+        gs_row3.addStretch()
+        gs_c_layout.addLayout(gs_row3)
+
+        self.gs_controls_frame.setEnabled(False)
+        gs_layout.addWidget(self.gs_controls_frame)
+        layout.addWidget(gs_box)
+
+        # --- 4. Proton & Wine Optimizations Card ---
+        proton_box = QFrame()
+        proton_box.setStyleSheet(f"background-color: {ThemeColors.BG_CARD}; border: 1px solid {ThemeColors.BORDER_CARD}; border-radius: 8px; padding: 12px;")
+        pb_layout = QVBoxLayout(proton_box)
+        pb_layout.setSpacing(8)
+
+        pb_title = QLabel("🍷 Proton & Wine Laufzeitumgebung:")
+        pb_title.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {ThemeColors.ACCENT_CYAN};")
+        pb_layout.addWidget(pb_title)
+
+        self.cb_nvapi = QCheckBox("NVIDIA DLSS / Raytracing Support freischalten (PROTON_ENABLE_NVAPI=1)")
+        self.cb_nvapi.stateChanged.connect(self._on_tuning_control_changed)
         pb_layout.addWidget(self.cb_nvapi)
 
-        self.cb_dxvk_async = QCheckBox("DXVK Shader Pre-Caching / Async (DXVK_ASYNC=1)")
-        self.cb_dxvk_async.stateChanged.connect(self._update_launch_preview)
-        pb_layout.addWidget(self.cb_dxvk_async)
+        self.cb_hide_nvidia = QCheckBox("NVIDIA GPU verbergen bei Spielstarts mit Erkennungsfehlern (PROTON_HIDE_NVIDIA_GPU=1)")
+        self.cb_hide_nvidia.stateChanged.connect(self._on_tuning_control_changed)
+        pb_layout.addWidget(self.cb_hide_nvidia)
 
         self.cb_no_esync = QCheckBox("ESync deaktivieren bei Audio-/Stutter-Problemen (PROTON_NO_ESYNC=1)")
-        self.cb_no_esync.stateChanged.connect(self._update_launch_preview)
+        self.cb_no_esync.stateChanged.connect(self._on_tuning_control_changed)
         pb_layout.addWidget(self.cb_no_esync)
+
+        self.cb_no_fsync = QCheckBox("FSync deaktivieren bei Kernel- oder Sync-Konflikten (PROTON_NO_FSYNC=1)")
+        self.cb_no_fsync.stateChanged.connect(self._on_tuning_control_changed)
+        pb_layout.addWidget(self.cb_no_fsync)
+
+        self.cb_wayland = QCheckBox("Natives Proton Wayland aktivieren (PROTON_ENABLE_WAYLAND=1)")
+        self.cb_wayland.stateChanged.connect(self._on_tuning_control_changed)
+        pb_layout.addWidget(self.cb_wayland)
+
+        # Wine-GE FSR row
+        wfsr_row = QHBoxLayout()
+        self.cb_wine_fsr = QCheckBox("Wine-GE Vollbild-FSR für alle Spiele aktivieren (WINE_FULLSCREEN_FSR=1)")
+        self.cb_wine_fsr.stateChanged.connect(self._on_tuning_control_changed)
+        wfsr_row.addWidget(self.cb_wine_fsr)
+
+        wfsr_row.addSpacing(16)
+        wfsr_row.addWidget(QLabel("Schärfestufe:"))
+        self.combo_wine_fsr_strength = QComboBox()
+        self.combo_wine_fsr_strength.addItem("2 - Scharf (Empfohlen)", "2")
+        self.combo_wine_fsr_strength.addItem("1 - Extrem scharf", "1")
+        self.combo_wine_fsr_strength.addItem("3 - Ausgewogen", "3")
+        self.combo_wine_fsr_strength.addItem("4 - Weich", "4")
+        self.combo_wine_fsr_strength.addItem("5 - Sehr weich", "5")
+        self.combo_wine_fsr_strength.currentIndexChanged.connect(self._on_tuning_control_changed)
+        wfsr_row.addWidget(self.combo_wine_fsr_strength)
+        wfsr_row.addStretch()
+        pb_layout.addLayout(wfsr_row)
+
+        self.cb_large_address = QCheckBox("Large Address Aware erzwingen (4 GB RAM für alte 32-Bit Spiele) (PROTON_FORCE_LARGE_ADDRESS_AWARE=1)")
+        self.cb_large_address.stateChanged.connect(self._on_tuning_control_changed)
+        pb_layout.addWidget(self.cb_large_address)
+
+        self.cb_wined3d = QCheckBox("WineD3D OpenGL Fallback erzwingen (bei D3D8/9 Darstellungsfehlern) (PROTON_USE_WINED3D=1)")
+        self.cb_wined3d.stateChanged.connect(self._on_tuning_control_changed)
+        pb_layout.addWidget(self.cb_wined3d)
+
+        self.cb_proton_log = QCheckBox("Proton Debug-Logfile erstellen unter ~/steam-<appid>.log (PROTON_LOG=1)")
+        self.cb_proton_log.stateChanged.connect(self._on_tuning_control_changed)
+        pb_layout.addWidget(self.cb_proton_log)
 
         layout.addWidget(proton_box)
 
-        # Custom arguments
-        args_row = QHBoxLayout()
-        args_lbl = QLabel("Benutzerdefinierte Argumente:")
-        args_lbl.setStyleSheet("font-weight: bold;")
-        args_row.addWidget(args_lbl)
+        # --- 5. Graphics Drivers & DXVK Card ---
+        gfx_box = QFrame()
+        gfx_box.setStyleSheet(f"background-color: {ThemeColors.BG_CARD}; border: 1px solid {ThemeColors.BORDER_CARD}; border-radius: 8px; padding: 12px;")
+        gb_layout = QVBoxLayout(gfx_box)
+        gb_layout.setSpacing(8)
+
+        gb_title = QLabel("🎮 Grafiktreiber, Vulkan (DXVK / VKD3D) & Audio:")
+        gb_title.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {ThemeColors.ACCENT_CYAN};")
+        gb_layout.addWidget(gb_title)
+
+        self.cb_dxvk_async = QCheckBox("DXVK Asynchrone Shader-Kompilierung (DXVK_ASYNC=1 - Ruckler vermeiden)")
+        self.cb_dxvk_async.stateChanged.connect(self._on_tuning_control_changed)
+        gb_layout.addWidget(self.cb_dxvk_async)
+
+        self.cb_dxvk_hud = QCheckBox("DXVK internes Leistungs-HUD einblenden (DXVK_HUD=fps,frametimes,devinfo)")
+        self.cb_dxvk_hud.stateChanged.connect(self._on_tuning_control_changed)
+        gb_layout.addWidget(self.cb_dxvk_hud)
+
+        self.cb_vkd3d_dxr = QCheckBox("DirectX 12 Raytracing aktivieren (VKD3D_CONFIG=dxr11,dxr)")
+        self.cb_vkd3d_dxr.stateChanged.connect(self._on_tuning_control_changed)
+        gb_layout.addWidget(self.cb_vkd3d_dxr)
+
+        self.cb_radv_gpl = QCheckBox("AMD RADV Graphics Pipeline Library aktivieren (RADV_PERFTEST=gpl)")
+        self.cb_radv_gpl.stateChanged.connect(self._on_tuning_control_changed)
+        gb_layout.addWidget(self.cb_radv_gpl)
+
+        self.cb_pulse_latency = QCheckBox("Audio-Latenz & Knistern-Fix für PipeWire/PulseAudio (PULSE_LATENCY_MSEC=60)")
+        self.cb_pulse_latency.stateChanged.connect(self._on_tuning_control_changed)
+        gb_layout.addWidget(self.cb_pulse_latency)
+
+        layout.addWidget(gfx_box)
+
+        # --- 6. Custom & PCGW Arguments Card ---
+        args_box = QFrame()
+        args_box.setStyleSheet(f"background-color: {ThemeColors.BG_CARD}; border: 1px solid {ThemeColors.BORDER_CARD}; border-radius: 8px; padding: 12px;")
+        ab_layout = QVBoxLayout(args_box)
+        ab_layout.setSpacing(8)
+
+        ab_title = QLabel("💡 Startparameter & PCGamingWiki Schnell-Chips:")
+        ab_title.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {ThemeColors.ACCENT_CYAN};")
+        ab_layout.addWidget(ab_title)
+
+        # Chips row
+        chips_row = QHBoxLayout()
+        chips_row.setSpacing(6)
+        for chip in ["-skipintro", "-novid", "--launcher-skip", "-windowed", "-console", "-nointro", "-dx11", "-vulkan"]:
+            btn_chip = QPushButton(f"+ {chip}")
+            btn_chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_chip.setStyleSheet(f"""
+                QPushButton {{
+                    background: rgba(255, 255, 255, 0.05);
+                    border: 1px solid {ThemeColors.BORDER_SUBTLE};
+                    border-radius: 4px;
+                    color: {ThemeColors.TEXT_PRIMARY};
+                    font-size: 10px;
+                    font-weight: 600;
+                    padding: 3px 7px;
+                }}
+                QPushButton:hover {{
+                    background: {ThemeColors.ACCENT_GREEN};
+                    color: #04100c;
+                    border-color: {ThemeColors.ACCENT_GREEN};
+                }}
+            """)
+            btn_chip.clicked.connect(lambda _, c=chip: self._add_quick_chip(c))
+            chips_row.addWidget(btn_chip)
+        chips_row.addStretch()
+        ab_layout.addLayout(chips_row)
 
         self.custom_args_edit = QLineEdit()
-        self.custom_args_edit.setPlaceholderText("-skipintro -novid --launcher-skip")
-        self.custom_args_edit.textChanged.connect(self._update_launch_preview)
-        args_row.addWidget(self.custom_args_edit)
-        layout.addLayout(args_row)
+        self.custom_args_edit.setPlaceholderText("Weitere Startparameter eintragen (z. B. -skipintro -novid)")
+        self.custom_args_edit.textChanged.connect(self._on_tuning_control_changed)
+        ab_layout.addWidget(self.custom_args_edit)
 
-        # Generated Output box
-        layout.addWidget(QLabel("Generierte Startoptionen (für Steam / Heroic):"))
+        layout.addWidget(args_box)
+
+        scroll.setWidget(container)
+        root_layout.addWidget(scroll, stretch=1)
+
+        # --- 7. Sticky Bottom Action Bar ---
+        action_bar = QFrame()
+        action_bar.setStyleSheet(f"background-color: {ThemeColors.BG_PANEL}; border-top: 1px solid {ThemeColors.BORDER_SUBTLE}; padding: 12px;")
+        act_layout = QVBoxLayout(action_bar)
+        act_layout.setContentsMargins(14, 10, 14, 10)
+        act_layout.setSpacing(8)
+
+        lbl_out = QLabel("Generierte Startoptionen (für Steam / Heroic / Lutris):")
+        lbl_out.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {ThemeColors.TEXT_SECONDARY};")
+        act_layout.addWidget(lbl_out)
+
         self.preview_box = QLineEdit()
         self.preview_box.setReadOnly(True)
-        self.preview_box.setStyleSheet(f"font-family: monospace; font-size: 12px; background-color: {ThemeColors.BG_INPUT}; padding: 10px;")
-        layout.addWidget(self.preview_box)
+        self.preview_box.setStyleSheet(f"font-family: 'JetBrains Mono', 'Consolas', monospace; font-size: 12px; background-color: {ThemeColors.BG_INPUT}; color: {ThemeColors.ACCENT_GREEN}; padding: 8px; border: 1px solid {ThemeColors.BORDER_CARD}; border-radius: 5px;")
+        act_layout.addWidget(self.preview_box)
 
-        # Copy button
-        copy_row = QHBoxLayout()
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+
         self.copy_cmd_btn = QPushButton("📋 In Zwischenablage kopieren")
         self.copy_cmd_btn.setProperty("class", "primary-btn")
+        self.copy_cmd_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.copy_cmd_btn.clicked.connect(self._copy_launch_command)
-        copy_row.addWidget(self.copy_cmd_btn)
-        copy_row.addStretch()
-        layout.addLayout(copy_row)
+        btn_row.addWidget(self.copy_cmd_btn)
 
-        layout.addStretch()
+        self.save_profile_btn = QPushButton("💾 Als Profil speichern")
+        self.save_profile_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.save_profile_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ThemeColors.BG_CARD};
+                border: 1px solid {ThemeColors.BORDER_CARD};
+                border-radius: 6px;
+                padding: 7px 14px;
+                color: {ThemeColors.TEXT_PRIMARY};
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                border-color: {ThemeColors.ACCENT_CYAN};
+                background-color: {ThemeColors.BG_CARD_HOVER};
+            }}
+        """)
+        self.save_profile_btn.clicked.connect(self._save_game_tuning_profile)
+        btn_row.addWidget(self.save_profile_btn)
+
+        self.launch_now_btn = QPushButton("▶️ Spiel jetzt starten")
+        self.launch_now_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.launch_now_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {ThemeColors.ACCENT_CYAN};
+                color: #04100c;
+                border-radius: 6px;
+                padding: 7px 16px;
+                font-weight: 800;
+                border: none;
+            }}
+            QPushButton:hover {{
+                background-color: #38bdf8;
+            }}
+        """)
+        self.launch_now_btn.clicked.connect(self._launch_game_now)
+        btn_row.addWidget(self.launch_now_btn)
+
+        btn_row.addStretch()
+
+        self.reset_btn = QPushButton("🔄 Zurücksetzen")
+        self.reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.reset_btn.setProperty("class", "ghost-btn")
+        self.reset_btn.clicked.connect(self._reset_tuning_defaults)
+        btn_row.addWidget(self.reset_btn)
+
+        act_layout.addLayout(btn_row)
+        root_layout.addWidget(action_bar)
+
         self._update_launch_preview()
 
-    def _update_launch_preview(self):
-        self.launch_config.use_gamemode = self.cb_gamemode.isChecked()
-        self.launch_config.use_mangohud = self.cb_mangohud.isChecked()
-        self.launch_config.env_vars["PROTON_ENABLE_NVAPI"] = "1" if self.cb_nvapi.isChecked() else "0"
-        self.launch_config.env_vars["DXVK_ASYNC"] = "1" if self.cb_dxvk_async.isChecked() else "0"
-        self.launch_config.env_vars["PROTON_NO_ESYNC"] = "1" if self.cb_no_esync.isChecked() else "0"
+    def _on_gamescope_toggled(self, state):
+        checked = bool(state == Qt.CheckState.Checked.value or state == 2 or state is True)
+        self.gs_controls_frame.setEnabled(checked)
+        self._on_tuning_control_changed()
 
+    def _on_preset_changed(self, index):
+        if self._is_updating_ui:
+            return
+        preset_key = self.combo_preset.currentData()
+        if not preset_key or preset_key == "custom":
+            return
+
+        preset = PRESET_DEFINITIONS.get(preset_key)
+        if not preset:
+            return
+
+        self.lbl_preset_desc.setText(preset.get("description", ""))
+
+        self._is_updating_ui = True
+        LaunchOptionBuilder.apply_preset(self.launch_config, preset_key)
+        self._sync_ui_from_config()
+        self._is_updating_ui = False
+
+        self._update_launch_preview()
+
+    def _on_tuning_control_changed(self):
+        if self._is_updating_ui:
+            return
+        # If user manually changed a control, mark preset as custom
+        self._is_updating_ui = True
+        idx = self.combo_preset.findData("custom")
+        if idx != -1:
+            self.combo_preset.setCurrentIndex(idx)
+            self.lbl_preset_desc.setText("Benutzerdefinierte Einstellungen.")
+        self._is_updating_ui = False
+
+        self._update_launch_preview()
+
+    def _add_quick_chip(self, chip: str):
+        curr = self.custom_args_edit.text().strip()
+        if chip in curr:
+            new_val = curr.replace(chip, "").strip()
+            self.custom_args_edit.setText(" ".join(new_val.split()))
+        else:
+            if curr:
+                self.custom_args_edit.setText(f"{curr} {chip}")
+            else:
+                self.custom_args_edit.setText(chip)
+
+    def _sync_ui_from_config(self):
+        cfg = self.launch_config
+
+        # Preset
+        idx = self.combo_preset.findData(cfg.preset)
+        if idx != -1:
+            self.combo_preset.setCurrentIndex(idx)
+            preset_def = PRESET_DEFINITIONS.get(cfg.preset)
+            if preset_def:
+                self.lbl_preset_desc.setText(preset_def.get("description", ""))
+            else:
+                self.lbl_preset_desc.setText("Benutzerdefinierte Einstellungen.")
+
+        # Wrappers
+        self.cb_gamemode.setChecked(cfg.use_gamemode)
+        self.cb_mangohud.setChecked(cfg.use_mangohud)
+        self.cb_prime_run.setChecked(cfg.use_prime_run)
+        self.cb_high_priority.setChecked(cfg.use_high_priority)
+        self.cpu_pinning_edit.setText(cfg.cpu_pinning)
+
+        # Gamescope
+        self.cb_gamescope.setChecked(cfg.use_gamescope)
+        self.gs_controls_frame.setEnabled(cfg.use_gamescope)
+
+        idx_mode = self.combo_gs_mode.findData(cfg.gamescope_mode)
+        if idx_mode != -1:
+            self.combo_gs_mode.setCurrentIndex(idx_mode)
+
+        idx_up = self.combo_gs_upscale.findData(cfg.gamescope_upscale)
+        if idx_up != -1:
+            self.combo_gs_upscale.setCurrentIndex(idx_up)
+
+        for i in range(self.combo_gs_render.count()):
+            if self.combo_gs_render.itemData(i) == (cfg.gamescope_render_w, cfg.gamescope_render_h):
+                self.combo_gs_render.setCurrentIndex(i)
+                break
+
+        for i in range(self.combo_gs_output.count()):
+            if self.combo_gs_output.itemData(i) == (cfg.gamescope_output_w, cfg.gamescope_output_h):
+                self.combo_gs_output.setCurrentIndex(i)
+                break
+
+        for i in range(self.combo_gs_rate.count()):
+            if self.combo_gs_rate.itemData(i) == cfg.gamescope_r:
+                self.combo_gs_rate.setCurrentIndex(i)
+                break
+
+        self.spin_gs_sharpness.setValue(cfg.gamescope_sharpness)
+        self.cb_gs_hdr.setChecked(cfg.gamescope_hdr)
+
+        # Proton & Wine
+        self.cb_nvapi.setChecked(cfg.env_vars.get("PROTON_ENABLE_NVAPI") == "1")
+        self.cb_hide_nvidia.setChecked(cfg.env_vars.get("PROTON_HIDE_NVIDIA_GPU") == "1")
+        self.cb_no_esync.setChecked(cfg.env_vars.get("PROTON_NO_ESYNC") == "1")
+        self.cb_no_fsync.setChecked(cfg.env_vars.get("PROTON_NO_FSYNC") == "1")
+        self.cb_wayland.setChecked(cfg.env_vars.get("PROTON_ENABLE_WAYLAND") == "1")
+        self.cb_wine_fsr.setChecked(cfg.env_vars.get("WINE_FULLSCREEN_FSR") == "1")
+
+        idx_wfsr = self.combo_wine_fsr_strength.findData(cfg.env_vars.get("WINE_FULLSCREEN_FSR_STRENGTH", "2"))
+        if idx_wfsr != -1:
+            self.combo_wine_fsr_strength.setCurrentIndex(idx_wfsr)
+
+        self.cb_large_address.setChecked(cfg.env_vars.get("PROTON_FORCE_LARGE_ADDRESS_AWARE") == "1")
+        self.cb_wined3d.setChecked(cfg.env_vars.get("PROTON_USE_WINED3D") == "1")
+        self.cb_proton_log.setChecked(cfg.env_vars.get("PROTON_LOG") == "1")
+
+        # Graphics & Audio
+        self.cb_dxvk_async.setChecked(cfg.env_vars.get("DXVK_ASYNC") == "1")
+        self.cb_dxvk_hud.setChecked(bool(cfg.env_vars.get("DXVK_HUD")))
+        self.cb_vkd3d_dxr.setChecked(bool(cfg.env_vars.get("VKD3D_CONFIG")))
+        self.cb_radv_gpl.setChecked(cfg.env_vars.get("RADV_PERFTEST") == "gpl")
+        self.cb_pulse_latency.setChecked(bool(cfg.env_vars.get("PULSE_LATENCY_MSEC")))
+
+        # Custom args
+        self.custom_args_edit.setText(" ".join(cfg.custom_args))
+
+    def _sync_config_from_ui(self):
+        cfg = self.launch_config
+
+        cfg.preset = self.combo_preset.currentData() or "custom"
+
+        # Wrappers
+        cfg.use_gamemode = self.cb_gamemode.isChecked()
+        cfg.use_mangohud = self.cb_mangohud.isChecked()
+        cfg.use_prime_run = self.cb_prime_run.isChecked()
+        cfg.use_high_priority = self.cb_high_priority.isChecked()
+        cfg.cpu_pinning = self.cpu_pinning_edit.text().strip()
+
+        # Gamescope
+        cfg.use_gamescope = self.cb_gamescope.isChecked()
+        cfg.gamescope_mode = self.combo_gs_mode.currentData() or "fullscreen"
+        cfg.gamescope_upscale = self.combo_gs_upscale.currentData() or ""
+
+        render_res = self.combo_gs_render.currentData()
+        if render_res and isinstance(render_res, tuple):
+            cfg.gamescope_render_w, cfg.gamescope_render_h = render_res
+
+        out_res = self.combo_gs_output.currentData()
+        if out_res and isinstance(out_res, tuple):
+            cfg.gamescope_output_w, cfg.gamescope_output_h = out_res
+
+        cfg.gamescope_r = self.combo_gs_rate.currentData() or 0
+        cfg.gamescope_sharpness = self.spin_gs_sharpness.value()
+        cfg.gamescope_hdr = self.cb_gs_hdr.isChecked()
+
+        # Proton & Wine
+        cfg.env_vars["PROTON_ENABLE_NVAPI"] = "1" if self.cb_nvapi.isChecked() else "0"
+        cfg.env_vars["PROTON_HIDE_NVIDIA_GPU"] = "1" if self.cb_hide_nvidia.isChecked() else "0"
+        cfg.env_vars["PROTON_NO_ESYNC"] = "1" if self.cb_no_esync.isChecked() else "0"
+        cfg.env_vars["PROTON_NO_FSYNC"] = "1" if self.cb_no_fsync.isChecked() else "0"
+        cfg.env_vars["PROTON_ENABLE_WAYLAND"] = "1" if self.cb_wayland.isChecked() else "0"
+        cfg.env_vars["WINE_FULLSCREEN_FSR"] = "1" if self.cb_wine_fsr.isChecked() else "0"
+        cfg.env_vars["WINE_FULLSCREEN_FSR_STRENGTH"] = self.combo_wine_fsr_strength.currentData() or "2"
+        cfg.env_vars["PROTON_FORCE_LARGE_ADDRESS_AWARE"] = "1" if self.cb_large_address.isChecked() else "0"
+        cfg.env_vars["PROTON_USE_WINED3D"] = "1" if self.cb_wined3d.isChecked() else "0"
+        cfg.env_vars["PROTON_LOG"] = "1" if self.cb_proton_log.isChecked() else "0"
+
+        # Graphics & Audio
+        cfg.env_vars["DXVK_ASYNC"] = "1" if self.cb_dxvk_async.isChecked() else "0"
+        cfg.env_vars["DXVK_HUD"] = "fps,frametimes,devinfo" if self.cb_dxvk_hud.isChecked() else ""
+        cfg.env_vars["VKD3D_CONFIG"] = "dxr11,dxr" if self.cb_vkd3d_dxr.isChecked() else ""
+        cfg.env_vars["RADV_PERFTEST"] = "gpl" if self.cb_radv_gpl.isChecked() else ""
+        cfg.env_vars["PULSE_LATENCY_MSEC"] = "60" if self.cb_pulse_latency.isChecked() else ""
+
+        # Custom args
         args_str = self.custom_args_edit.text().strip()
-        self.launch_config.custom_args = [args_str] if args_str else []
+        cfg.custom_args = [args_str] if args_str else []
 
+    def _update_launch_preview(self):
+        self._sync_config_from_ui()
         cmd = LaunchOptionBuilder.build_command_line(self.launch_config)
         self.preview_box.setText(cmd)
+
+    def _load_game_tuning_profile(self, app_id: str):
+        self._is_updating_ui = True
+        self.launch_config = LaunchOptionBuilder.load_profile(app_id)
+        self._sync_ui_from_config()
+        self._is_updating_ui = False
+        self._update_launch_preview()
+
+    def _save_game_tuning_profile(self):
+        if not self.game:
+            return
+        self._sync_config_from_ui()
+        LaunchOptionBuilder.save_profile(self.game.app_id, self.launch_config)
+        self.save_profile_btn.setText("✅ Profil gespeichert!")
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(2000, lambda: self.save_profile_btn.setText("💾 Als Profil speichern"))
+
+    def _reset_tuning_defaults(self):
+        self._is_updating_ui = True
+        self.launch_config = LaunchConfig()
+        LaunchOptionBuilder.apply_preset(self.launch_config, "balanced")
+        self._sync_ui_from_config()
+        self._is_updating_ui = False
+        self._update_launch_preview()
 
     def _copy_launch_command(self):
         cmd = self.preview_box.text()
@@ -1023,6 +1550,18 @@ class GameDetailView(QWidget):
         self.copy_cmd_btn.setText("✅ Kopiert!")
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(2000, lambda: self.copy_cmd_btn.setText("📋 In Zwischenablage kopieren"))
+
+    def _launch_game_now(self):
+        if not self.game:
+            return
+        self._sync_config_from_ui()
+        ok, msg = LaunchOptionBuilder.launch_game(self.game, self.launch_config)
+        if ok:
+            self.launch_now_btn.setText("🚀 Gestartet!")
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(3000, lambda: self.launch_now_btn.setText("▶️ Spiel jetzt starten"))
+        else:
+            QMessageBox.warning(self, "Start-Fehler", msg)
 
     # -------------------------------------------------------------
     # TAB 5: SAVEGAME BACKUPS
