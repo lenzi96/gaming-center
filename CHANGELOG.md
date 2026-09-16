@@ -12,6 +12,12 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
   - Update-Center-Dialog mit Versionsstatus, Changelog-Viewer und Live-Installationslog.
   - 1-Klick-Selbstaktualisierung im laufenden Betrieb mit automatischem Neustart.
   - Diskrete Hintergrundprüfung auf neue Versionen beim Start mit Badge in der Menüleiste.
+- **Grafischer Setup-Assistent (`installer_gui.py` & `install-gui.sh`)**:
+  - Moderner CachyOS/Arch Setup-Wizard im Emerald/Cyan Dark Theme.
+  - Automatisches System-Auditing (Python, PyQt6, Steam, Heroic, Lutris, GameMode, MangoHud, Gamescope).
+  - Flexible Komponenten- und Pfadauswahl mit Größenberechnung.
+  - Asynchrone Installation & Deinstallation mit Live-Fortschritt und Log-Konsole.
+  - 1-Klick-Direktstart nach erfolgreicher Einrichtung.
 - **PCGamingWiki Community Patches & Fixes Downloader**:
   - Automatisches Scannen und Extrahieren von Fixes, Patches und Mod-Links aus PCGamingWiki Artikeln.
   - GitHub Release Resolver: Direkte Erkennung und Auflösung der neuesten Binärdateien aus GitHub-Releases (z. B. Cyber Engine Tweaks, DSfix, SilentPatch).

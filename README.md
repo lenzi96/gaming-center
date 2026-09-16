@@ -45,14 +45,24 @@ Ein modernes Linux-Spiele-Service-Center mit **PCGamingWiki**-Live-Anbindung, na
 
 ## 🚀 Installation
 
-### Schnellinstallation (Benutzer-Ebene)
+### Option 1: Grafischer Setup-Assistent (Empfohlen)
+Startet den modernen grafischen Setup-Wizard mit System-Auditing, Komponenten-Auswahl und 1-Klick-Start:
 ```bash
-git clone https://github.com/cachyos/gaming-center.git  # oder lokaler Ordner
+./install-gui.sh
+# oder direkt:
+python3 installer_gui.py
+```
+
+### Option 2: Schnellinstallation im Terminal
+```bash
+git clone https://github.com/lenzi96/gaming-center.git  # oder lokaler Ordner
 cd gaming-center
 ./install.sh
 ```
 
 ### Deinstallation
+- **Über den grafischen Assistenten**: `./install-gui.sh` starten und auf **"Deinstallieren"** klicken.
+- **Oder via Terminal**:
 ```bash
 ./uninstall.sh
 ```
