@@ -113,39 +113,116 @@ class GameScanner(QObject):
 
         return sorted(list(libraries))
 
-    def _find_steam_art(self, appid: str, steam_cache_dirs: List[str]) -> Tuple[Optional[str], Optional[str]]:
-        """Finds local cover art in Steam appcache or returns None."""
+    def _find_steam_art(
+        self, appid: str, steam_cache_dirs: List[str], steam_root_dirs: Optional[List[str]] = None
+    ) -> Tuple[Optional[str], Optional[str]]:
+        """Finds local cover art in Steam appcache, userdata grid, or cached covers."""
         poster = None
         banner = None
 
+        # 1. Search modern appcache/librarycache/<appid>/ (subdirectories with sha1 hash)
         for cache_dir in steam_cache_dirs:
             if not os.path.isdir(cache_dir):
                 continue
-            
-            # Common Steam capsule / portrait filenames
-            portrait_candidates = [
-                os.path.join(cache_dir, f"{appid}_library_600x900.jpg"),
-                os.path.join(cache_dir, f"{appid}_library_capsule.jpg"),
-                os.path.join(cache_dir, appid, "library_600x900.jpg"),
-                os.path.join(cache_dir, appid, "library_capsule.jpg"),
-            ]
-            for p in portrait_candidates:
-                if os.path.isfile(p):
-                    poster = p
-                    break
 
-            banner_candidates = [
-                os.path.join(cache_dir, f"{appid}_header.jpg"),
-                os.path.join(cache_dir, f"{appid}_library_hero.jpg"),
-                os.path.join(cache_dir, appid, "header.jpg"),
-            ]
-            for b in banner_candidates:
-                if os.path.isfile(b):
-                    banner = b
-                    break
+            app_dir = os.path.join(cache_dir, appid)
+            if os.path.isdir(app_dir):
+                try:
+                    with os.scandir(app_dir) as entries:
+                        for entry in entries:
+                            if entry.is_dir():
+                                try:
+                                    with os.scandir(entry.path) as sub_entries:
+                                        for sub in sub_entries:
+                                            name = sub.name.lower()
+                                            if not poster and ("capsule" in name or "600x900" in name):
+                                                poster = sub.path
+                                            elif not banner and ("hero" in name or "header" in name) and "blur" not in name:
+                                                banner = sub.path
+                                            if poster and banner:
+                                                break
+                                except Exception:
+                                    pass
+                            elif entry.is_file():
+                                name = entry.name.lower()
+                                if not poster and ("capsule" in name or "600x900" in name):
+                                    poster = entry.path
+                                elif not banner and ("hero" in name or "header" in name) and "blur" not in name:
+                                    banner = entry.path
+                            if poster and banner:
+                                break
+                except Exception:
+                    pass
 
             if poster and banner:
-                break
+                return poster, banner
+
+            # Flat candidates directly inside cache_dir
+            if not poster:
+                for cand in [
+                    os.path.join(cache_dir, f"{appid}_library_600x900.jpg"),
+                    os.path.join(cache_dir, f"{appid}_library_capsule.jpg"),
+                    os.path.join(cache_dir, appid, "library_600x900.jpg"),
+                    os.path.join(cache_dir, appid, "library_capsule.jpg"),
+                ]:
+                    if os.path.isfile(cand):
+                        poster = cand
+                        break
+
+            if not banner:
+                for cand in [
+                    os.path.join(cache_dir, f"{appid}_header.jpg"),
+                    os.path.join(cache_dir, f"{appid}_library_hero.jpg"),
+                    os.path.join(cache_dir, appid, "header.jpg"),
+                ]:
+                    if os.path.isfile(cand):
+                        banner = cand
+                        break
+
+            if poster and banner:
+                return poster, banner
+
+        # 2. Search Steam userdata/<user_id>/config/grid/
+        if steam_root_dirs:
+            for s_root in steam_root_dirs:
+                userdata_dir = os.path.join(s_root, "userdata")
+                if not os.path.isdir(userdata_dir):
+                    continue
+                try:
+                    with os.scandir(userdata_dir) as u_entries:
+                        for u_entry in u_entries:
+                            if u_entry.is_dir():
+                                grid_dir = os.path.join(u_entry.path, "config", "grid")
+                                if os.path.isdir(grid_dir):
+                                    if not poster:
+                                        for ext in ["p.jpg", "p.png", "_portrait.png", "_portrait.jpg"]:
+                                            cand = os.path.join(grid_dir, f"{appid}{ext}")
+                                            if os.path.isfile(cand):
+                                                poster = cand
+                                                break
+                                    if not banner:
+                                        for ext in ["_hero.jpg", "_hero.png", ".jpg", ".png"]:
+                                            cand = os.path.join(grid_dir, f"{appid}{ext}")
+                                            if os.path.isfile(cand):
+                                                banner = cand
+                                                break
+                except Exception:
+                    pass
+
+        # 3. Check ~/.cache/gaming-center/covers/
+        cache_center = os.path.expanduser("~/.cache/gaming-center/covers")
+        if not poster:
+            for ext in [".jpg", ".png"]:
+                cand = os.path.join(cache_center, f"steam_{appid}_poster{ext}")
+                if os.path.isfile(cand) and os.path.getsize(cand) > 0:
+                    poster = cand
+                    break
+        if not banner:
+            for ext in [".jpg", ".png"]:
+                cand = os.path.join(cache_center, f"steam_{appid}_banner{ext}")
+                if os.path.isfile(cand) and os.path.getsize(cand) > 0:
+                    banner = cand
+                    break
 
         return poster, banner
 
@@ -176,6 +253,11 @@ class GameScanner(QObject):
             os.path.join(home, ".local/share/Steam/appcache/librarycache"),
             os.path.join(home, ".steam/steam/appcache/librarycache"),
             os.path.join(home, ".var/app/com.valvesoftware.Steam/.local/share/Steam/appcache/librarycache"),
+        ]
+        steam_roots = [
+            os.path.join(home, ".local/share/Steam"),
+            os.path.join(home, ".steam/steam"),
+            os.path.join(home, ".var/app/com.valvesoftware.Steam/.local/share/Steam"),
         ]
 
         seen_appids = set()
@@ -216,7 +298,7 @@ class GameScanner(QObject):
                     last_played = int(last_played_m.group(1)) if last_played_m else 0
                     size_mb = int(int(size_m.group(1)) / (1024 * 1024)) if size_m else 0
 
-                    poster, banner = self._find_steam_art(appid, cache_dirs)
+                    poster, banner = self._find_steam_art(appid, cache_dirs, steam_roots)
                     prefix = self._find_steam_prefix(appid, libraries, lib)
 
                     games.append(GameInfo(
@@ -240,6 +322,7 @@ class GameScanner(QObject):
         """Scans Heroic Games Launcher (GOG, Epic Games)."""
         games: List[GameInfo] = []
         home = os.path.expanduser("~")
+        cache_center = os.path.expanduser("~/.cache/gaming-center/covers")
         
         # 1. GOG Games
         gog_file = os.path.join(home, ".config/heroic/gog_store/installed.json")
@@ -253,7 +336,6 @@ class GameScanner(QObject):
                         title = item.get("title", app_name)
                         install_dir = item.get("install_path", "")
                         prefix = ""
-                        # Heroic game config might specify prefix
                         cfg_file = os.path.join(home, f".config/heroic/GamesConfig/{app_name}.json")
                         if os.path.isfile(cfg_file):
                             try:
@@ -263,13 +345,28 @@ class GameScanner(QObject):
                             except Exception:
                                 pass
 
+                        clean_id = "".join(c for c in app_name if c.isalnum() or c in ("-", "_"))
+                        poster = item.get("image")
+                        banner = None
+                        for ext in [".jpg", ".png"]:
+                            cand = os.path.join(cache_center, f"heroic_{clean_id}_poster{ext}")
+                            if os.path.isfile(cand):
+                                poster = cand
+                                break
+                        for ext in [".jpg", ".png"]:
+                            cand = os.path.join(cache_center, f"heroic_{clean_id}_banner{ext}")
+                            if os.path.isfile(cand):
+                                banner = cand
+                                break
+
                         games.append(GameInfo(
                             app_id=f"heroic_gog_{app_name}",
                             name=title,
                             platform="heroic",
                             install_dir=install_dir,
                             prefix_dir=prefix,
-                            poster_image=item.get("image"),
+                            banner_image=banner,
+                            poster_image=poster,
                             size_mb=0
                         ))
             except Exception:
@@ -277,6 +374,19 @@ class GameScanner(QObject):
 
         # 2. Legendary (Epic Games)
         legendary_file = os.path.join(home, ".config/heroic/legendaryConfig/legendary/installed.json")
+        legendary_art_cache = {}
+        legendary_lib_file = os.path.join(home, ".config/heroic/store_cache/legendary_library.json")
+        if os.path.isfile(legendary_lib_file):
+            try:
+                with open(legendary_lib_file, "r", encoding="utf-8", errors="ignore") as f:
+                    ldata = json.load(f)
+                    for litem in ldata.get("library", []):
+                        aname = litem.get("app_name")
+                        if aname:
+                            legendary_art_cache[aname] = (litem.get("art_square"), litem.get("art_cover"))
+            except Exception:
+                pass
+
         if os.path.isfile(legendary_file):
             try:
                 with open(legendary_file, "r", encoding="utf-8", errors="ignore") as f:
@@ -294,12 +404,38 @@ class GameScanner(QObject):
                             except Exception:
                                 pass
 
+                        clean_id = "".join(c for c in app_name if c.isalnum() or c in ("-", "_"))
+                        poster = None
+                        banner = None
+
+                        # Check local cover cache
+                        for ext in [".jpg", ".png"]:
+                            cand = os.path.join(cache_center, f"heroic_{clean_id}_poster{ext}")
+                            if os.path.isfile(cand):
+                                poster = cand
+                                break
+                        for ext in [".jpg", ".png"]:
+                            cand = os.path.join(cache_center, f"heroic_{clean_id}_banner{ext}")
+                            if os.path.isfile(cand):
+                                banner = cand
+                                break
+
+                        # Check legendary library cache art
+                        if app_name in legendary_art_cache:
+                            l_poster, l_banner = legendary_art_cache[app_name]
+                            if not poster and l_poster:
+                                poster = l_poster
+                            if not banner and l_banner:
+                                banner = l_banner
+
                         games.append(GameInfo(
                             app_id=f"heroic_epic_{app_name}",
                             name=title,
                             platform="heroic",
                             install_dir=install_dir,
                             prefix_dir=prefix,
+                            banner_image=banner,
+                            poster_image=poster,
                             size_mb=0
                         ))
             except Exception:
@@ -314,6 +450,12 @@ class GameScanner(QObject):
         pga_db = os.path.join(home, ".local/share/lutris/pga.db")
         if not os.path.isfile(pga_db):
             return games
+
+        lutris_dirs = [
+            os.path.join(home, ".local/share/lutris"),
+            os.path.join(home, ".var/app/net.lutris.Lutris/data/lutris"),
+        ]
+        cache_center = os.path.expanduser("~/.cache/gaming-center/covers")
 
         try:
             conn = sqlite3.connect(pga_db)
@@ -337,12 +479,39 @@ class GameScanner(QObject):
                     except Exception:
                         pass
 
+                # Resolve coverart and banners
+                poster = None
+                banner = None
+                for ldir in lutris_dirs:
+                    if not poster:
+                        for ext in [".jpg", ".png"]:
+                            cand = os.path.join(ldir, "coverart", f"{slug}{ext}")
+                            if os.path.isfile(cand):
+                                poster = cand
+                                break
+                    if not banner:
+                        for ext in [".jpg", ".png"]:
+                            cand = os.path.join(ldir, "banners", f"{slug}{ext}")
+                            if os.path.isfile(cand):
+                                banner = cand
+                                break
+
+                # Check local cache
+                if not poster:
+                    for ext in [".jpg", ".png"]:
+                        cand = os.path.join(cache_center, f"lutris_{gid}_poster{ext}")
+                        if os.path.isfile(cand):
+                            poster = cand
+                            break
+
                 games.append(GameInfo(
                     app_id=f"lutris_{gid}",
                     name=name,
                     platform="lutris",
                     install_dir=directory or "",
                     prefix_dir=prefix,
+                    banner_image=banner,
+                    poster_image=poster,
                     size_mb=0
                 ))
             conn.close()

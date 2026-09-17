@@ -302,6 +302,13 @@ class GameDetailView(QWidget):
                 ))
         else:
             self.thumb_label.clear()
+            try:
+                from ..backend.cover_manager import CoverManager
+                cm = CoverManager.get_instance()
+                cm.cover_downloaded.connect(self._on_cover_downloaded_for_detail)
+                cm.fetch_cover_async(game)
+            except Exception:
+                pass
 
         # Update external links visibility
         is_steam = game.platform == "steam" and game.app_id.isdigit()
@@ -331,6 +338,15 @@ class GameDetailView(QWidget):
 
         # Detect and display Graphics API (DXVK vs VKD3D)
         self._update_graphics_api_display()
+
+    def _on_cover_downloaded_for_detail(self, app_id: str, local_path: str):
+        if self.game and self.game.app_id == app_id and local_path and os.path.isfile(local_path):
+            self.game.poster_image = local_path
+            pix = QPixmap(local_path)
+            if not pix.isNull():
+                self.thumb_label.setPixmap(pix.scaled(
+                    110, 150, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation
+                ))
 
     def _update_graphics_api_display(self):
         if not self.game:

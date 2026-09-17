@@ -109,12 +109,10 @@ class GameCard(QFrame):
         meta_layout.addLayout(badges_row)
         layout.addLayout(meta_layout)
 
-    def _load_cover(self):
-        """Loads and scales cover poster, or generates fallback visual."""
-        img_path = self.game.poster_image or self.game.banner_image
+    def _apply_cover_image(self, img_path: str) -> bool:
+        """Applies local image file to cover label, returns True if successful."""
         target_w = self.CARD_WIDTH - 12
         target_h = self.IMAGE_HEIGHT
-
         if img_path and os.path.isfile(img_path):
             pixmap = QPixmap(img_path)
             if not pixmap.isNull():
@@ -134,10 +132,34 @@ class GameCard(QFrame):
                 # Apply rounded corners
                 rounded = self._round_pixmap(cropped, 6)
                 self.cover_label.setPixmap(rounded)
-                return
+                return True
+        return False
+
+    def _load_cover(self):
+        """Loads and scales cover poster, or triggers background fetch and shows fallback visual."""
+        img_path = self.game.poster_image or self.game.banner_image
+        target_w = self.CARD_WIDTH - 12
+        target_h = self.IMAGE_HEIGHT
+
+        if img_path and self._apply_cover_image(img_path):
+            return
 
         # Fallback cover
         self.cover_label.setPixmap(self._generate_fallback_pixmap(target_w, target_h))
+
+        # Request background fetch if missing or URL
+        try:
+            from ..backend.cover_manager import CoverManager
+            cm = CoverManager.get_instance()
+            cm.cover_downloaded.connect(self._on_cover_downloaded)
+            cm.fetch_cover_async(self.game)
+        except Exception:
+            pass
+
+    def _on_cover_downloaded(self, app_id: str, local_path: str):
+        if self.game.app_id == app_id and local_path and os.path.isfile(local_path):
+            self.game.poster_image = local_path
+            self._apply_cover_image(local_path)
 
     def _round_pixmap(self, src: QPixmap, radius: int) -> QPixmap:
         dest = QPixmap(src.size())
