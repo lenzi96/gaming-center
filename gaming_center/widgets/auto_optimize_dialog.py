@@ -316,13 +316,16 @@ class AutoOptimizeDialog(QDialog):
             plat_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
             self.table.setItem(row, 2, plat_item)
 
-            # 4. Planned preset
-            preset_desc = f"{self.hw.vendor_display} Tuning + DXVK Async"
+            # 4. Planned preset & detected Graphics API
+            api = GameOptimizer.detect_graphics_api(g)
+            plan_desc = f"{api.badge_text} • {self.hw.vendor_display}"
             if self.hw.has_gamemode:
-                preset_desc += " + GameMode"
-            plan_item = QTableWidgetItem(preset_desc)
+                plan_desc += " + GameMode"
+            plan_item = QTableWidgetItem(plan_desc)
             plan_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            plan_item.setForeground(Qt.GlobalColor.cyan)
+            plan_item.setToolTip(f"Grafik-Schnittstelle: {api.label}\nErkannt über: {api.detection_source}")
+            from PyQt6.QtGui import QColor
+            plan_item.setForeground(QColor(api.color))
             self.table.setItem(row, 3, plan_item)
 
         self.table.itemChanged.connect(self._on_table_item_changed)

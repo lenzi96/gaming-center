@@ -31,7 +31,7 @@ from ..backend.path_resolver import PathResolver, ResolvedPath
 from ..backend.savegame_manager import SavegameManager, BackupInfo
 from ..backend.launch_builder import LaunchOptionBuilder, LaunchConfig, PRESET_DEFINITIONS
 from ..backend.translator import Translator
-from ..backend.optimizer import GameOptimizer, SystemHardwareInfo
+from ..backend.optimizer import GameOptimizer, SystemHardwareInfo, GraphicsApiInfo
 from .download_dialog import DownloadDialog
 from ..style.theme import ThemeColors
 
@@ -195,9 +195,28 @@ class GameDetailView(QWidget):
         info_box = QVBoxLayout()
         info_box.setSpacing(6)
 
+        # Title & API Badge
+        title_row = QHBoxLayout()
+        title_row.setSpacing(10)
         self.title_label = QLabel("Spielname")
         self.title_label.setStyleSheet("font-size: 22px; font-weight: bold; color: #ffffff;")
-        info_box.addWidget(self.title_label)
+        title_row.addWidget(self.title_label)
+
+        self.api_badge = QLabel("API: Auto")
+        self.api_badge.setStyleSheet(f"""
+            QLabel {{
+                background-color: rgba(56, 189, 248, 0.15);
+                color: #38bdf8;
+                font-size: 11px;
+                font-weight: 700;
+                padding: 3px 8px;
+                border-radius: 4px;
+                border: 1px solid rgba(56, 189, 248, 0.4);
+            }}
+        """)
+        title_row.addWidget(self.api_badge)
+        title_row.addStretch()
+        info_box.addLayout(title_row)
 
         self.meta_label = QLabel("Plattform • AppID • Installation")
         self.meta_label.setStyleSheet(f"font-size: 12px; color: {ThemeColors.TEXT_SECONDARY};")
@@ -309,6 +328,34 @@ class GameDetailView(QWidget):
         # Load game tuning profile
         self._load_game_tuning_profile(game.app_id)
 
+        # Detect and display Graphics API (DXVK vs VKD3D)
+        self._update_graphics_api_display()
+
+    def _update_graphics_api_display(self):
+        if not self.game:
+            return
+        api = GameOptimizer.detect_graphics_api(self.game, self.pcgw_data)
+        self.api_badge.setText(api.badge_text)
+        self.api_badge.setToolTip(f"Grafik-Schnittstelle: {api.label}\nErkannt über: {api.detection_source}")
+        self.api_badge.setStyleSheet(f"""
+            QLabel {{
+                background-color: rgba(16, 24, 38, 0.95);
+                color: {api.color};
+                font-size: 11px;
+                font-weight: 700;
+                padding: 3px 9px;
+                border-radius: 4px;
+                border: 1px solid {api.color};
+            }}
+        """)
+        if hasattr(self, "lbl_auto_card_desc"):
+            hw = GameOptimizer.detect_hardware()
+            gpu_disp = hw.gpu_name[:32] + "..." if len(hw.gpu_name) > 35 else hw.gpu_name
+            self.lbl_auto_card_desc.setText(
+                f"Erkannt: 🎮 {api.label} • {hw.vendor_display} ({gpu_disp}) • ⚡ {hw.cpu_threads} Threads\n"
+                f"Konfiguriert gezielte Optimierungen für {api.badge_text} (DXVK Async, VKD3D DXR, GPU-Tuning & Wiki-Fixes)."
+            )
+
     def _clear_dynamic_views(self):
         # Clear paths tab
         while self.paths_container_layout.count():
@@ -366,6 +413,9 @@ class GameDetailView(QWidget):
         if pcgw_data and pcgw_data.command_line_arguments:
             self.custom_args_edit.setText(" ".join(pcgw_data.command_line_arguments))
             self._update_launch_preview()
+
+        # Re-check API with PCGW features included
+        self._update_graphics_api_display()
 
     def _on_single_fix_translated(self, game: GameInfo, idx: int, translated_fix: PCGWFix):
         if self.game != game:
@@ -992,14 +1042,14 @@ class GameDetailView(QWidget):
         hw_info = GameOptimizer.detect_hardware()
         gpu_disp = hw_info.gpu_name[:32] + "..." if len(hw_info.gpu_name) > 35 else hw_info.gpu_name
         cpu_disp = hw_info.cpu_name[:32] + "..." if len(hw_info.cpu_name) > 35 else hw_info.cpu_name
-        ac_desc = QLabel(
+        self.lbl_auto_card_desc = QLabel(
             f"Erkannt: 🎮 {hw_info.vendor_display} ({gpu_disp}) • ⚡ {cpu_disp}\n"
-            "Konfiguriert mit einem Klick die optimalen Flags (DXVK Async, GPU-Tuning, GameMode, Wiki-Fixes)."
+            "Konfiguriert mit einem Klick die optimalen Flags (DXVK Async, VKD3D DXR, GPU-Tuning, Wiki-Fixes)."
         )
-        ac_desc.setStyleSheet(f"font-size: 11px; color: {ThemeColors.TEXT_SECONDARY};")
-        ac_desc.setWordWrap(True)
+        self.lbl_auto_card_desc.setStyleSheet(f"font-size: 11px; color: {ThemeColors.TEXT_SECONDARY};")
+        self.lbl_auto_card_desc.setWordWrap(True)
         ac_info.addWidget(ac_title)
-        ac_info.addWidget(ac_desc)
+        ac_info.addWidget(self.lbl_auto_card_desc)
         ac_layout.addLayout(ac_info, stretch=1)
 
         btn_auto_tune = QPushButton("⚡ Jetzt automatisch optimieren")

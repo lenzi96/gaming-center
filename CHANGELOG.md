@@ -11,6 +11,12 @@ Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokument
     - **AMD Radeon**: Automatische Aktivierung von RADV GPL Shader Pipeline (`RADV_PERFTEST=gpl`), DXVK Async (`DXVK_ASYNC=1`) und FSR Upscaling (`WINE_FULLSCREEN_FSR=1`).
     - **NVIDIA GeForce**: Freischaltung von NVIDIA NVAPI für DLSS/Reflex (`PROTON_ENABLE_NVAPI=1`), DirectX 12 Raytracing (`VKD3D_CONFIG=dxr11,dxr`) und DXVK Async.
     - **Intel / Standard**: DXVK Async und ausgewogene Performance-Profile.
+  - **DXVK vs. VKD3D Grafik-API Erkennung & gezielte Optimierung**:
+    - Automatische Erkennung, ob ein Spiel **DirectX 12 (VKD3D-Proton)**, **DirectX 9/10/11 (DXVK)**, **Hybrid (DX11 & DX12)** oder **Vulkan Native** nutzt.
+    - Multi-Level-Erkennung: Analyse von Steam-Shadercache (`VKD3D_shader_cache` vs `DXVK_state_cache`), Spiele-Dateien/DLLs/Binaries und PCGamingWiki-Attributen (`|direct3d versions`, `|vulkan versions`).
+    - **VKD3D-spezifische Optimierung**: Schaltet DirectX 12 DXR Raytracing (`VKD3D_CONFIG=dxr11,dxr`), RADV GPL Pipeline-Compiler und NVIDIA NVAPI / DLSS frei.
+    - **DXVK-spezifische Optimierung**: Schaltet DXVK Async Shader-Kompilierung (`DXVK_ASYNC=1`) und Wine-FSR Vollbild-Skalierung frei.
+    - Visuelle Badges (`🟣 VKD3D (DX12)`, `🔷 DXVK (DX11)`, `🔷 DXVK (DX9)`, `🔶 Hybrid`, `🟢 Vulkan`) in der Header-Karte und in der Batch-Tabelle des Auto-Optimierers.
   - Retro- & 32-Bit Heuristiken: Schutz vor Speicherabstürzen durch automatische Aktivierung von Large Address Aware (`PROTON_FORCE_LARGE_ADDRESS_AWARE=1`) für ältere Klassiker.
   - PCGamingWiki Parameter-Extraktion: Übernahme empfohlener Startflags (z. B. `-novid`, `-skipintro`).
   - **Spiele-Detailansicht**:

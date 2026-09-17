@@ -29,8 +29,9 @@ Ein modernes Linux-Spiele-Service-Center mit **PCGamingWiki**-Live-Anbindung, na
   - Generiert den fertigen Startbefehl für Steam auf Knopfdruck.
 - **⚡ 1-Klick Hardware- & Spiele-Auto-Optimierung**:
   - Automatische Erkennung deiner GPU (AMD Radeon RX, NVIDIA GeForce RTX, Intel Arc), CPU und Tools.
-  - Konfiguriert sofort die optimalen Treiber- und Proton-Parameter (RADV GPL, DXVK Async, DLSS, Large Address Aware).
-  - Verfügbar als 1-Klick-Button in der Detailansicht sowie als Bibliotheks-Batch-Optimierer für alle installierten Spiele.
+  - **Präzise Grafik-API-Erkennung**: Unterscheidet automatisch zwischen **DirectX 12 (VKD3D)**, **DirectX 9/10/11 (DXVK)**, **Hybrid** und **Vulkan Native** via Steam-Shadercache, Spieldateien und PCGW.
+  - Konfiguriert sofort die optimalen Treiber- und Proton-Parameter (VKD3D DXR Raytracing, RADV GPL, DXVK Async, DLSS, Large Address Aware).
+  - Verfügbar als 1-Klick-Button in der Detailansicht sowie als Bibliotheks-Batch-Optimierer für alle installierten Spiele mit visuellen API-Badges.
 
 - **⬇️ Community Patches & Fixes Downloader**:
   - Extrahiert Community-Patches und Mod-Tools direkt aus PCGamingWiki Artikeln (z. B. *Cyber Engine Tweaks*, *DSfix*, *SilentPatch*, *Ultimate-ASI-Loader*).

@@ -432,6 +432,18 @@ class PCGWClient:
         if fps:
             data.features["High FPS"] = fps.capitalize()
 
+        d3d = _get_val("direct3d versions") or _get_val("directx versions")
+        if d3d:
+            data.features["Direct3D"] = d3d
+
+        vk = _get_val("vulkan versions")
+        if vk and vk.lower() not in ("false", "no"):
+            data.features["Vulkan"] = vk
+
+        gl = _get_val("opengl versions")
+        if gl and gl.lower() not in ("false", "no"):
+            data.features["OpenGL"] = gl
+
         # 4. Extract Fixes (Fixbox templates with nested braces)
         idx = 0
         while True:

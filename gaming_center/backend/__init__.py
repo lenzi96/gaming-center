@@ -6,7 +6,7 @@ from .path_resolver import PathResolver
 from .savegame_manager import SavegameManager, BackupInfo
 from .launch_builder import LaunchOptionBuilder
 from .translator import Translator
-from .optimizer import GameOptimizer, SystemHardwareInfo, OptimizationResult
+from .optimizer import GameOptimizer, SystemHardwareInfo, OptimizationResult, GraphicsApiInfo
 
 __all__ = [
     "GameInfo",
@@ -21,4 +21,5 @@ __all__ = [
     "GameOptimizer",
     "SystemHardwareInfo",
     "OptimizationResult",
+    "GraphicsApiInfo",
 ]
