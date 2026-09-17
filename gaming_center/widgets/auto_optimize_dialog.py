@@ -42,13 +42,18 @@ class BatchOptimizeWorker(QThread):
         self.mode = mode
 
     def run(self):
-        results = GameOptimizer.optimize_batch(
-            games=self.games,
-            pcgw_client=self.pcgw_client,
-            mode=self.mode,
-            progress_cb=lambda cur, tot, name: self.progress.emit(cur, tot, name),
-        )
-        self.finished_batch.emit(results)
+        try:
+            results = GameOptimizer.optimize_batch(
+                games=self.games,
+                pcgw_client=self.pcgw_client,
+                mode=self.mode,
+                progress_cb=lambda cur, tot, name: self.progress.emit(cur, tot, name),
+            )
+            self.finished_batch.emit(results)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.finished_batch.emit([])
 
 
 class AutoOptimizeDialog(QDialog):
@@ -387,11 +392,10 @@ class AutoOptimizeDialog(QDialog):
         self.btn_close.setText("Fertigstellen")
 
         # Update table status
-        selected_games = self._get_selected_games()
-        for idx, res in enumerate(results):
-            # Find row
+        for res in results:
             for row in range(self.table.rowCount()):
-                if self.table.item(row, 1).text() == res.game_name:
+                name_item = self.table.item(row, 1)
+                if name_item and name_item.text() == res.game_name:
                     item = self.table.item(row, 3)
                     if item:
                         item.setText("✅ Optimiert & Gespeichert")

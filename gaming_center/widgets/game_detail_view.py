@@ -1619,23 +1619,33 @@ class GameDetailView(QWidget):
     def _auto_optimize_current_game(self):
         if not self.game:
             return
-        res = GameOptimizer.optimize_game(self.game, pcgw_data=self.pcgw_data)
-        self._is_updating_ui = True
-        self.launch_config = res.config
-        self._sync_ui_from_config()
-        self._is_updating_ui = False
-        self._update_launch_preview()
+        try:
+            res = GameOptimizer.optimize_game(self.game, pcgw_data=self.pcgw_data)
+            self._is_updating_ui = True
+            self.launch_config = res.config
+            self._sync_ui_from_config()
+            self._is_updating_ui = False
+            self._update_launch_preview()
 
-        tweaks_str = "\n".join(f"• {t}" for t in res.applied_tweaks)
-        hw = GameOptimizer.detect_hardware()
-        QMessageBox.information(
-            self,
-            "Auto-Optimierung erfolgreich",
-            f"🎉 {self.game.name} wurde erfolgreich automatisch optimiert!\n\n"
-            f"Erkanntes System:\n• GPU: {hw.vendor_display} ({hw.gpu_name})\n• CPU: {hw.cpu_name}\n\n"
-            f"Angewendete Optimierungen:\n{tweaks_str}\n\n"
-            f"Das Profil wurde dauerhaft in ~/.config/gaming-center/profiles/ gespeichert und ist sofort aktiv.",
-        )
+            tweaks_str = "\n".join(f"• {t}" for t in res.applied_tweaks)
+            hw = GameOptimizer.detect_hardware()
+            QMessageBox.information(
+                self,
+                "Auto-Optimierung erfolgreich",
+                f"🎉 {self.game.name} wurde erfolgreich automatisch optimiert!\n\n"
+                f"Erkanntes System:\n• GPU: {hw.vendor_display} ({hw.gpu_name})\n• CPU: {hw.cpu_name}\n\n"
+                f"Angewendete Optimierungen:\n{tweaks_str}\n\n"
+                f"Das Profil wurde dauerhaft in ~/.config/gaming-center/profiles/ gespeichert und ist sofort aktiv.",
+            )
+        except Exception as e:
+            self._is_updating_ui = False
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self,
+                "Fehler bei Auto-Optimierung",
+                f"Bei der automatischen Optimierung ist ein Fehler aufgetreten:\n{str(e)}",
+            )
 
     def _copy_launch_command(self):
         cmd = self.preview_box.text()

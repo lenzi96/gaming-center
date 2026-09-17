@@ -233,12 +233,15 @@ class GameOptimizer:
             applied_tweaks.append("🕹️ 32-Bit Schutz: Large Address Aware (4 GB RAM) aktiviert")
 
         # 4. PCGamingWiki Argumente & Fixes
-        if pcgw_data and pcgw_data.fixes:
-            wiki_args = cls._extract_useful_launch_args(pcgw_data)
-            for arg in wiki_args:
-                if arg not in config.custom_args:
-                    config.custom_args.append(arg)
-                    applied_tweaks.append(f"💡 Wiki-Parameter hinzugefügt: {arg}")
+        if pcgw_data:
+            try:
+                wiki_args = cls._extract_useful_launch_args(pcgw_data)
+                for arg in wiki_args:
+                    if arg not in config.custom_args:
+                        config.custom_args.append(arg)
+                        applied_tweaks.append(f"💡 Wiki-Parameter hinzugefügt: {arg}")
+            except Exception as e:
+                pass
 
         # If user has Gamescope installed and screen is high res, configure gamescope resolution
         if hw.has_gamescope and hw.screen_res:
@@ -253,7 +256,11 @@ class GameOptimizer:
                 pass
 
         # 5. Persist profile to disk
-        LaunchOptionBuilder.save_profile(game.app_id, config)
+        if game.app_id:
+            try:
+                LaunchOptionBuilder.save_profile(game.app_id, config)
+            except Exception:
+                pass
 
         summary = f"{len(applied_tweaks)} Optimierungen für {game.name} angewendet."
         return OptimizationResult(
@@ -280,20 +287,26 @@ class GameOptimizer:
 
         for idx, game in enumerate(games):
             if progress_cb:
-                progress_cb(idx + 1, total, game.name)
+                try:
+                    progress_cb(idx + 1, total, game.name)
+                except Exception:
+                    pass
 
             pcgw_data = None
             if pcgw_client:
                 try:
-                    # Quick search/fetch from local cache if possible
                     search_res = pcgw_client.search_game(game.name)
                     if search_res:
                         pcgw_data = pcgw_client.fetch_game_data(search_res[0][0])
                 except Exception:
                     pass
 
-            res = cls.optimize_game(game, pcgw_data=pcgw_data, hw=hw, mode=mode)
-            results.append(res)
+            try:
+                res = cls.optimize_game(game, pcgw_data=pcgw_data, hw=hw, mode=mode)
+                results.append(res)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
 
         return results
 
@@ -329,17 +342,32 @@ class GameOptimizer:
 
     @staticmethod
     def _extract_useful_launch_args(pcgw_data: PCGWData) -> List[str]:
-        """Extracts common recommended launch arguments from PCGW fixes."""
+        """Extracts common recommended launch arguments from PCGW fixes and arguments."""
+        if not pcgw_data:
+            return []
+
         candidates = ["-novid", "-skipintro", "-nointro", "--launcher-skip", "-dx11", "-vulkan"]
         found: List[str] = []
 
-        all_text = ""
-        for fix in pcgw_data.fixes:
-            all_text += f" {fix.title} {fix.problem} {fix.solution}"
+        # Check explicit command line arguments if available
+        if getattr(pcgw_data, "command_line_arguments", None):
+            for arg in pcgw_data.command_line_arguments:
+                arg_strip = arg.strip()
+                if any(cand == arg_strip.lower() for cand in candidates):
+                    if arg_strip not in found:
+                        found.append(arg_strip)
 
-        all_text_lower = all_text.lower()
+        all_text_parts = []
+        if getattr(pcgw_data, "fixes", None):
+            for fix in pcgw_data.fixes:
+                title = getattr(fix, "title", "") or ""
+                desc = getattr(fix, "description", "") or ""
+                instr = getattr(fix, "instructions", "") or ""
+                all_text_parts.append(f"{title} {desc} {instr}")
+
+        all_text = " ".join(all_text_parts).lower()
         for cand in candidates:
-            if cand in all_text_lower:
+            if cand in all_text and cand not in found:
                 found.append(cand)
 
         return found
