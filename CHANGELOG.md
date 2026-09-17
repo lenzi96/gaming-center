@@ -2,6 +2,30 @@
 
 Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokumentiert.
 
+## [v1.2.0] - 2026-09-17
+
+### Hinzugefügt
+- **Direkte Startoptionen-Übertragung in Steam, Heroic & Lutris**:
+  - Neuer sicherer Konfigurations-Writer (`LauncherWriter`): Schreibt generierte Startbefehle (z. B. `gamemoderun DXVK_ASYNC=1 %command%`) per 1-Klick direkt in die jeweiligen Launcher-Dateien.
+  - **Steam**: Modifiziert `userdata/<uid>/config/localconfig.vdf` (`Software.Valve.Steam.Apps.<appid>.LaunchOptions`) mit automatischen `.bak`-Sicherheitsbackups.
+  - **Heroic**: Schreibt Umgebungsvariablen, Wrapper und Startargumente atomar in `GamesConfig/<app_name>.json`.
+  - **Lutris**: Konfiguriert `prefix_command` und Argumente in `games/<slug>-<id>.yml`.
+  - **Live-Statusanzeige**: Farbiges Synchronisations-Badge in der Detailansicht (✅ Synchronisiert, ⚠️ Weicht ab, ⚪ Nicht hinterlegt).
+  - **Aktions-Buttons**: Schnelles Übertragen (*„📥 In Steam übertragen“*) oder Entfernen (*„🗑️ Aus Launcher entfernen“*).
+  - **Batch-Übertragung**: Checkbox im Auto-Optimierungs-Dialog (`AutoOptimizeDialog`), um optimierte Startoptionen direkt für die gesamte Bibliothek zu schreiben.
+  - **Prozessüberwachung**: Erkennt via `pgrep -x steam`, ob Steam aktiv ist, und gibt Sicherheitshinweise zum Neustart.
+- **Vollständige Cover- & Banner-Erkennung (100% Bibliotheksabdeckung)**:
+  - **Modernes Steam Appcache-Layout**: Rekursive Erkennung von Kapseln und Hero-Bannern in gehashten Unterordnern (`appcache/librarycache/<appid>/<sha1_hash>/library_capsule.jpg` und `library_hero.jpg`).
+  - **Steam User-Grid**: Durchsucht zusätzlich alle User-Profile (`userdata/<uid>/config/grid/<appid>p.jpg`).
+  - **Heroic & Lutris Artworks**: Vollständige Auflösung von GOG- und Epic-Covern (`art_square` aus `legendary_library.json`) sowie Lutris-Bannern (`coverart/` und `banners/`).
+  - **Neuer CoverManager (`gaming_center/backend/cover_manager.py`)**:
+    - Zentraler Disk-Cache unter `~/.cache/gaming-center/covers/`.
+    - Fallback-Auflösung über das offizielle Steam Cloudflare CDN (`library_600x900_2x.jpg`, `library_hero.jpg`, `header.jpg`).
+    - Asynchroner Background-Download-Pool (`QThreadPool`) für flüssige UI-Darstellung ohne Freezes.
+  - **Asynchrone UI-Aktualisierung**: `GameCard` und `GameDetailView` wechseln sanft von Platzhaltern auf nachgeladene Kapseln.
+
+---
+
 ## [v1.1.5] - 2026-09-17
 
 ### Hinzugefügt

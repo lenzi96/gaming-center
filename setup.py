@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="gaming-center",
-    version="1.1.5",
+    version="1.2.0",
     description="Linux Game Service Center mit PCGamingWiki Integration",
     author="Julian",
     packages=find_packages(),

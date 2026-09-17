@@ -87,7 +87,8 @@ class CoverManager(QObject):
 
     def download_image_sync(self, urls: List[str], target_path: str) -> Optional[str]:
         """Tries to download the image from the list of URLs in order and save it to target_path."""
-        headers = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) GamingCenter/1.1.5"}
+        import gaming_center
+        headers = {"User-Agent": f"Mozilla/5.0 (X11; Linux x86_64) GamingCenter/{gaming_center.__version__}"}
         for url in urls:
             try:
                 req = urllib.request.Request(url, headers=headers)
