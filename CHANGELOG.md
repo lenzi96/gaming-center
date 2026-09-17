@@ -2,7 +2,7 @@
 
 Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokumentiert.
 
-## [v1.2.0] - 2026-09-17
+## [v1.1.5] - 2026-09-17
 
 ### Hinzugefügt
 - **Hardware- & Spiele-Auto-Optimierung (1-Klick)**:

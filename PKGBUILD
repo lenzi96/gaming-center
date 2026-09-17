@@ -1,7 +1,7 @@
 # Maintainer: Julian
 pkgname=gaming-center-git
 _pkgname=gaming-center
-pkgver=1.0.0
+pkgver=1.1.5
 pkgrel=1
 pkgdesc="Linux Game Service Center mit PCGamingWiki Integration"
 arch=('any')
