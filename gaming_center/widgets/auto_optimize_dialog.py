@@ -35,11 +35,12 @@ class BatchOptimizeWorker(QThread):
     progress = pyqtSignal(int, int, str)               # current, total, game_name
     finished_batch = pyqtSignal(list)                   # List[OptimizationResult]
 
-    def __init__(self, games: List[GameInfo], pcgw_client: PCGWClient, mode: str):
+    def __init__(self, games: List[GameInfo], pcgw_client: PCGWClient, mode: str, apply_to_launcher: bool = False):
         super().__init__()
         self.games = games
         self.pcgw_client = pcgw_client
         self.mode = mode
+        self.apply_to_launcher = apply_to_launcher
 
     def run(self):
         try:
@@ -48,6 +49,7 @@ class BatchOptimizeWorker(QThread):
                 pcgw_client=self.pcgw_client,
                 mode=self.mode,
                 progress_cb=lambda cur, tot, name: self.progress.emit(cur, tot, name),
+                apply_to_launcher=self.apply_to_launcher,
             )
             self.finished_batch.emit(results)
         except Exception as e:
@@ -195,16 +197,26 @@ class AutoOptimizeDialog(QDialog):
         opt_l.addStretch()
         root.addWidget(opt_box)
 
-        # 4. Games Table
+        # 4. Games Table Header & Launcher Transfer Toggle
         table_header = QHBoxLayout()
+        table_header.setSpacing(16)
+
         self.cb_select_all = QCheckBox("Alle Spiele auswählen")
         self.cb_select_all.setChecked(True)
         self.cb_select_all.stateChanged.connect(self._toggle_select_all)
         table_header.addWidget(self.cb_select_all)
 
+        self.cb_apply_launcher = QCheckBox("📥 Startoptionen direkt in Launcher (Steam / Heroic / Lutris) übertragen")
+        self.cb_apply_launcher.setChecked(True)
+        self.cb_apply_launcher.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cb_apply_launcher.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {ThemeColors.ACCENT_CYAN};")
+        self.cb_apply_launcher.setToolTip("Schreibt die optimierten Startoptionen (%command%) direkt in die Konfigurationsdateien (Steam localconfig.vdf, Heroic JSON, Lutris YAML).")
+        table_header.addWidget(self.cb_apply_launcher)
+
+        table_header.addStretch()
+
         self.lbl_selected_count = QLabel(f"{len(self.all_games)} Spiele ausgewählt")
         self.lbl_selected_count.setStyleSheet(f"font-size: 11px; color: {ThemeColors.TEXT_SECONDARY};")
-        table_header.addStretch()
         table_header.addWidget(self.lbl_selected_count)
         root.addLayout(table_header)
 
@@ -377,7 +389,10 @@ class AutoOptimizeDialog(QDialog):
         self.status_lbl.setVisible(True)
         self.status_lbl.setText("Starte Auto-Optimierung...")
 
-        self.worker = BatchOptimizeWorker(games_to_opt, self.pcgw_client, mode)
+        apply_launcher = self.cb_apply_launcher.isChecked()
+        self._applied_to_launcher = apply_launcher
+
+        self.worker = BatchOptimizeWorker(games_to_opt, self.pcgw_client, mode, apply_to_launcher=apply_launcher)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_batch.connect(self._on_finished)
         self.worker.start()
@@ -389,7 +404,10 @@ class AutoOptimizeDialog(QDialog):
     def _on_finished(self, results: List[OptimizationResult]):
         self.results = results
         self.progress_bar.setValue(self.progress_bar.maximum())
-        self.status_lbl.setText(f"✅ {len(results)} Spiele erfolgreich optimiert und Profile gespeichert!")
+        status_msg = f"✅ {len(results)} Spiele erfolgreich optimiert und Profile gespeichert!"
+        if getattr(self, "_applied_to_launcher", False):
+            status_msg += " (Startoptionen in Launcher übertragen)"
+        self.status_lbl.setText(status_msg)
         self.btn_optimize.setVisible(False)
         self.btn_close.setEnabled(True)
         self.btn_close.setText("Fertigstellen")
@@ -401,15 +419,23 @@ class AutoOptimizeDialog(QDialog):
                 if name_item and name_item.text() == res.game_name:
                     item = self.table.item(row, 3)
                     if item:
-                        item.setText("✅ Optimiert & Gespeichert")
+                        txt = "✅ Im Launcher hinterlegt" if getattr(self, "_applied_to_launcher", False) else "✅ Optimiert & Gespeichert"
+                        item.setText(txt)
                         item.setForeground(Qt.GlobalColor.green)
                     break
+
+        from ..backend.launcher_writer import LauncherWriter
+        launcher_note = ""
+        if getattr(self, "_applied_to_launcher", False):
+            launcher_note = "\n\n📥 Die Startoptionen wurden direkt in Steam (localconfig.vdf), Heroic und Lutris hinterlegt."
+            if LauncherWriter.is_steam_running():
+                launcher_note += "\n⚠️ Steam ist aktuell geöffnet: Bitte starte Steam neu, damit die Optionen wirksam werden."
 
         QMessageBox.information(
             self,
             "Auto-Optimierung abgeschlossen",
             f"🎉 {len(results)} Spiele wurden erfolgreich optimiert!\n\n"
             f"Erkanntes System: {self.hw.vendor_display} • {self.hw.cpu_name}\n"
-            f"Profile wurden dauerhaft in ~/.config/gaming-center/profiles/ gespeichert.\n"
+            f"Profile wurden dauerhaft in ~/.config/gaming-center/profiles/ gespeichert.{launcher_note}\n\n"
             f"Die Spiele können nun direkt mit maximaler Leistung gestartet werden.",
         )

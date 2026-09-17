@@ -32,6 +32,7 @@ from ..backend.savegame_manager import SavegameManager, BackupInfo
 from ..backend.launch_builder import LaunchOptionBuilder, LaunchConfig, PRESET_DEFINITIONS
 from ..backend.translator import Translator
 from ..backend.optimizer import GameOptimizer, SystemHardwareInfo, GraphicsApiInfo
+from ..backend.launcher_writer import LauncherWriter
 from .download_dialog import DownloadDialog
 from ..style.theme import ThemeColors
 
@@ -1392,9 +1393,16 @@ class GameDetailView(QWidget):
         act_layout.setContentsMargins(14, 10, 14, 10)
         act_layout.setSpacing(8)
 
+        lbl_out_row = QHBoxLayout()
         lbl_out = QLabel("Generierte Startoptionen (für Steam / Heroic / Lutris):")
         lbl_out.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {ThemeColors.TEXT_SECONDARY};")
-        act_layout.addWidget(lbl_out)
+        lbl_out_row.addWidget(lbl_out)
+
+        self.lbl_launcher_sync_status = QLabel("")
+        self.lbl_launcher_sync_status.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {ThemeColors.TEXT_MUTED};")
+        lbl_out_row.addStretch()
+        lbl_out_row.addWidget(self.lbl_launcher_sync_status)
+        act_layout.addLayout(lbl_out_row)
 
         self.preview_box = QLineEdit()
         self.preview_box.setReadOnly(True)
@@ -1403,6 +1411,25 @@ class GameDetailView(QWidget):
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
+
+        self.apply_to_launcher_btn = QPushButton("📥 In Steam übertragen")
+        self.apply_to_launcher_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.apply_to_launcher_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {ThemeColors.ACCENT_GREEN}, stop:1 #00b07c);
+                color: #04100c;
+                font-size: 12px;
+                font-weight: 800;
+                padding: 7px 15px;
+                border-radius: 6px;
+                border: none;
+            }}
+            QPushButton:hover {{
+                background: #00f0a8;
+            }}
+        """)
+        self.apply_to_launcher_btn.clicked.connect(self._apply_launch_options_to_launcher)
+        btn_row.addWidget(self.apply_to_launcher_btn)
 
         self.copy_cmd_btn = QPushButton("📋 In Zwischenablage kopieren")
         self.copy_cmd_btn.setProperty("class", "primary-btn")
@@ -1448,6 +1475,13 @@ class GameDetailView(QWidget):
         btn_row.addWidget(self.launch_now_btn)
 
         btn_row.addStretch()
+
+        self.clear_launcher_btn = QPushButton("🗑️ Aus Launcher entfernen")
+        self.clear_launcher_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clear_launcher_btn.setProperty("class", "ghost-btn")
+        self.clear_launcher_btn.setToolTip("Entfernt die benutzerdefinierten Startoptionen für dieses Spiel wieder aus dem Launcher.")
+        self.clear_launcher_btn.clicked.connect(self._clear_launch_options_from_launcher)
+        btn_row.addWidget(self.clear_launcher_btn)
 
         self.reset_btn = QPushButton("🔄 Zurücksetzen")
         self.reset_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1641,6 +1675,7 @@ class GameDetailView(QWidget):
         self._sync_config_from_ui()
         cmd = LaunchOptionBuilder.build_command_line(self.launch_config)
         self.preview_box.setText(cmd)
+        self._update_launcher_sync_status()
 
     def _load_game_tuning_profile(self, app_id: str):
         self._is_updating_ui = True
@@ -1649,12 +1684,66 @@ class GameDetailView(QWidget):
         self._is_updating_ui = False
         self._update_launch_preview()
 
+    def _apply_launch_options_to_launcher(self):
+        if not self.game:
+            return
+        self._sync_config_from_ui()
+        self._save_game_tuning_profile()
+        cmd = self.preview_box.text().strip()
+
+        ok, msg = LauncherWriter.write_launch_options(self.game, cmd)
+        plat = (self.game.platform or "steam").capitalize()
+        if ok:
+            QMessageBox.information(self, f"In {plat} übertragen", msg)
+            self._update_launcher_sync_status()
+        else:
+            QMessageBox.warning(self, f"Fehler beim Übertragen in {plat}", msg)
+
+    def _clear_launch_options_from_launcher(self):
+        if not self.game:
+            return
+        plat = (self.game.platform or "steam").capitalize()
+        reply = QMessageBox.question(
+            self,
+            f"Startoptionen aus {plat} entfernen",
+            f"Möchtest du die hinterlegten Startoptionen für '{self.game.name}' wirklich aus {plat} entfernen?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            ok, msg = LauncherWriter.clear_launcher_options(self.game)
+            if ok:
+                QMessageBox.information(self, "Entfernt", f"Startoptionen wurden aus {plat} entfernt.")
+                self._update_launcher_sync_status()
+            else:
+                QMessageBox.warning(self, "Fehler", msg)
+
+    def _update_launcher_sync_status(self):
+        if not self.game or not hasattr(self, "lbl_launcher_sync_status") or not hasattr(self, "apply_to_launcher_btn"):
+            return
+        plat = (self.game.platform or "steam").capitalize()
+        self.apply_to_launcher_btn.setText(f"📥 In {plat} übertragen")
+        current_cmd = LauncherWriter.read_current_launcher_options(self.game)
+        preview_cmd = self.preview_box.text().strip() if hasattr(self, "preview_box") else ""
+
+        if not current_cmd:
+            self.lbl_launcher_sync_status.setText(f"Status in {plat}: ⚪ Nicht hinterlegt")
+            self.lbl_launcher_sync_status.setStyleSheet(f"color: {ThemeColors.TEXT_MUTED};")
+        elif current_cmd.strip() == preview_cmd.strip():
+            self.lbl_launcher_sync_status.setText(f"Status in {plat}: ✅ Synchronisiert")
+            self.lbl_launcher_sync_status.setStyleSheet(f"color: {ThemeColors.ACCENT_GREEN};")
+        else:
+            short_cmd = current_cmd if len(current_cmd) <= 30 else current_cmd[:27] + "..."
+            self.lbl_launcher_sync_status.setText(f"Status in {plat}: ⚠️ Weicht ab ({short_cmd})")
+            self.lbl_launcher_sync_status.setStyleSheet("color: #f59e0b;")
+
     def _save_game_tuning_profile(self):
         if not self.game:
             return
         self._sync_config_from_ui()
         LaunchOptionBuilder.save_profile(self.game.app_id, self.launch_config)
         self.save_profile_btn.setText("✅ Profil gespeichert!")
+        self._update_launcher_sync_status()
         from PyQt6.QtCore import QTimer
         QTimer.singleShot(2000, lambda: self.save_profile_btn.setText("💾 Als Profil speichern"))
 

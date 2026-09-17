@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from .game_scanner import GameInfo
 from .launch_builder import LaunchConfig, LaunchOptionBuilder
 from .pcgw_client import PCGWClient, PCGWData
+from .launcher_writer import LauncherWriter
 
 
 @dataclass
@@ -73,6 +74,7 @@ class OptimizationResult:
     api_info: GraphicsApiInfo = field(default_factory=GraphicsApiInfo)
     applied_tweaks: List[str] = field(default_factory=list)
     summary: str = ""
+    game: Optional[GameInfo] = None
 
 
 class GameOptimizer:
@@ -738,6 +740,7 @@ class GameOptimizer:
             api_info=api_info,
             applied_tweaks=applied_tweaks,
             summary=summary,
+            game=game,
         )
 
     @classmethod
@@ -747,6 +750,7 @@ class GameOptimizer:
         pcgw_client: Optional[PCGWClient] = None,
         mode: str = "performance",
         progress_cb: Optional[Callable[[int, int, str], None]] = None,
+        apply_to_launcher: bool = False,
     ) -> List[OptimizationResult]:
         """Optimizes multiple games in batch."""
         hw = cls.detect_hardware()
@@ -771,6 +775,14 @@ class GameOptimizer:
 
             try:
                 res = cls.optimize_game(game, pcgw_data=pcgw_data, hw=hw, mode=mode)
+                if apply_to_launcher:
+                    try:
+                        cmd_line = LaunchOptionBuilder.build_command_line(res.config, base_placeholder="%command%")
+                        ok, msg = LauncherWriter.write_launch_options(game, cmd_line)
+                        if ok:
+                            res.applied_tweaks.append("📥 Startoptionen direkt in Launcher übertragen")
+                    except Exception:
+                        pass
                 results.append(res)
             except Exception as e:
                 import traceback
