@@ -6,6 +6,8 @@ Analyzes system hardware (GPU, CPU, Steam Deck, installed tools) and game metada
 generate and persist optimal launch configurations.
 """
 
+import json
+import mmap
 import os
 import re
 import shutil
@@ -75,17 +77,32 @@ class OptimizationResult:
 
 class GameOptimizer:
     _cached_hw: Optional[SystemHardwareInfo] = None
+    _cached_api: Dict[str, GraphicsApiInfo] = {}
 
     @classmethod
     def detect_graphics_api(
         cls,
         game: GameInfo,
         pcgw_data: Optional[PCGWData] = None,
+        force_refresh: bool = False,
     ) -> GraphicsApiInfo:
         """
         Detects whether a game uses VKD3D (DirectX 12), DXVK (DirectX 9/10/11),
         Hybrid (both), or Vulkan Native.
+        Uses a high-performance multi-tier inspection:
+        1. In-memory cache lookup
+        2. Steam Shadercache inspection (all Steam library locations)
+        3. Passed or locally cached PCGamingWiki metadata
+        4. Targeted binary/DLL and Agility SDK inspection (mmap + PE search)
+        5. Wine/Proton prefix logs and config overrides
+        6. Engine & retro heuristics
         """
+        cache_key = f"{game.app_id}_{game.install_dir}"
+        if not force_refresh and pcgw_data is None and cache_key in cls._cached_api:
+            return cls._cached_api[cache_key]
+
+        api_info: Optional[GraphicsApiInfo] = None
+
         # 1. Check Steam Shadercache (Highest confidence for already-run games)
         if game.app_id:
             possible_sc_dirs = [
@@ -106,15 +123,15 @@ class GameOptimizer:
                     pass
 
             for sc in possible_sc_dirs:
-                if sc.exists() and sc.is_dir():
+                if sc.is_dir():
                     try:
                         vkd3d_dir = sc / "VKD3D_shader_cache"
-                        has_vkd3d = vkd3d_dir.exists() and any(f.is_file() and f.stat().st_size > 0 for f in vkd3d_dir.iterdir())
+                        has_vkd3d = vkd3d_dir.is_dir() and any(f.is_file() and f.stat().st_size > 0 for f in vkd3d_dir.iterdir())
                         dxvk_dir = sc / "DXVK_state_cache"
-                        has_dxvk = dxvk_dir.exists() and any(f.is_file() and f.stat().st_size > 0 for f in dxvk_dir.iterdir())
+                        has_dxvk = dxvk_dir.is_dir() and any(f.is_file() and f.stat().st_size > 0 for f in dxvk_dir.iterdir())
 
                         if has_vkd3d and has_dxvk:
-                            return GraphicsApiInfo(
+                            api_info = GraphicsApiInfo(
                                 layer="hybrid",
                                 directx_versions=["11", "12"],
                                 label="Hybrid (DX11 DXVK & DX12 VKD3D)",
@@ -122,8 +139,9 @@ class GameOptimizer:
                                 color="#f59e0b",
                                 detection_source="Steam Shadercache",
                             )
+                            break
                         elif has_vkd3d:
-                            return GraphicsApiInfo(
+                            api_info = GraphicsApiInfo(
                                 layer="vkd3d",
                                 directx_versions=["12"],
                                 label="VKD3D (DirectX 12)",
@@ -131,8 +149,9 @@ class GameOptimizer:
                                 color="#a855f7",
                                 detection_source="Steam VKD3D Shadercache",
                             )
+                            break
                         elif has_dxvk:
-                            return GraphicsApiInfo(
+                            api_info = GraphicsApiInfo(
                                 layer="dxvk",
                                 directx_versions=["11"],
                                 label="DXVK (DirectX 9-11)",
@@ -140,114 +159,43 @@ class GameOptimizer:
                                 color="#38bdf8",
                                 detection_source="Steam DXVK Shadercache",
                             )
+                            break
                     except Exception:
                         pass
 
-        # 2. Check Game Directory for .dxvk-cache or D3D12/D3D11 specific files
-        has_bin_dx12 = False
-        has_bin_dx11 = False
-        has_bin_dx9 = False
-        has_bin_vulkan = False
+        # 2. Check PCGamingWiki Data (Passed object or local JSON cache)
+        if not api_info:
+            d3d_ver: Optional[str] = None
+            vk_ver: Optional[str] = None
+            if pcgw_data and getattr(pcgw_data, "features", None):
+                d3d_ver = pcgw_data.features.get("Direct3D")
+                vk_ver = pcgw_data.features.get("Vulkan")
+            else:
+                # Fast check of local PCGW disk cache (~0.5ms)
+                cache_dir = os.path.expanduser("~/.cache/gaming-center/pcgw")
+                if os.path.isdir(cache_dir):
+                    try:
+                        for fname in os.listdir(cache_dir):
+                            if fname.endswith(".json"):
+                                fpath = os.path.join(cache_dir, fname)
+                                try:
+                                    with open(fpath, "r", encoding="utf-8") as fp:
+                                        cdata = json.load(fp)
+                                        if (game.app_id and cdata.get("steam_appid") == game.app_id) or cdata.get("page_title", "").lower() == game.name.lower():
+                                            feats = cdata.get("features", {})
+                                            d3d_ver = feats.get("Direct3D")
+                                            vk_ver = feats.get("Vulkan")
+                                            break
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
 
-        if game.install_dir and os.path.isdir(game.install_dir):
-            try:
-                for root, dirs, files in os.walk(game.install_dir):
-                    for f in files:
-                        fl = f.lower()
-                        if fl.endswith(".dxvk-cache"):
-                            has_bin_dx11 = True
-                        elif fl in ("d3d12.dll", "d3d12core.dll", "d3d12sdklayers.dll") or "dx12" in fl or "d3d12" in fl:
-                            has_bin_dx12 = True
-                        elif fl in ("d3d11.dll", "d3d10core.dll") or "dx11" in fl or "d3d11" in fl:
-                            has_bin_dx11 = True
-                        elif fl == "d3d9.dll" or "dx9" in fl or "d3d9" in fl:
-                            has_bin_dx9 = True
-                        elif fl in ("vulkan-1.dll", "libvulkan.so") or "vulkan" in fl:
-                            has_bin_vulkan = True
-                    if root.count(os.sep) - game.install_dir.count(os.sep) >= 2:
-                        break
-            except Exception:
-                pass
-
-        # Check binary strings in executables if still ambiguous
-        if not (has_bin_dx12 or has_bin_dx11 or has_bin_dx9) and game.install_dir and os.path.isdir(game.install_dir):
-            try:
-                for root, dirs, files in os.walk(game.install_dir):
-                    for f in files:
-                        if f.lower().endswith(".exe"):
-                            p = os.path.join(root, f)
-                            try:
-                                with open(p, "rb") as fp:
-                                    buf = fp.read(8 * 1024 * 1024)
-                                    if b"D3D12CreateDevice" in buf or b"d3d12.dll" in buf or b"ID3D12Device" in buf:
-                                        has_bin_dx12 = True
-                                    if b"D3D11CreateDevice" in buf or b"d3d11.dll" in buf or b"ID3D11Device" in buf:
-                                        has_bin_dx11 = True
-                                    if b"Direct3DCreate9" in buf or b"d3d9.dll" in buf or b"IDirect3D9" in buf:
-                                        has_bin_dx9 = True
-                                    if b"vkCreateInstance" in buf or b"vulkan-1.dll" in buf:
-                                        has_bin_vulkan = True
-                            except Exception:
-                                pass
-                    if has_bin_dx12 or has_bin_dx11 or has_bin_dx9 or (root.count(os.sep) - game.install_dir.count(os.sep) >= 2):
-                        break
-            except Exception:
-                pass
-
-        if has_bin_dx12 and (has_bin_dx11 or has_bin_dx9):
-            return GraphicsApiInfo(
-                layer="hybrid",
-                directx_versions=["11", "12"],
-                label="Hybrid (DX11 DXVK & DX12 VKD3D)",
-                badge_text="DX11/DX12 Hybrid",
-                color="#f59e0b",
-                detection_source="Spiele-Dateien",
-            )
-        elif has_bin_dx12:
-            return GraphicsApiInfo(
-                layer="vkd3d",
-                directx_versions=["12"],
-                label="VKD3D (DirectX 12)",
-                badge_text="VKD3D (DX12)",
-                color="#a855f7",
-                detection_source="Spiele-Dateien (D3D12)",
-            )
-        elif has_bin_dx11:
-            return GraphicsApiInfo(
-                layer="dxvk",
-                directx_versions=["11"],
-                label="DXVK (DirectX 11)",
-                badge_text="DXVK (DX11)",
-                color="#38bdf8",
-                detection_source="Spiele-Dateien (D3D11)",
-            )
-        elif has_bin_dx9:
-            return GraphicsApiInfo(
-                layer="dxvk",
-                directx_versions=["9"],
-                label="DXVK (DirectX 9)",
-                badge_text="DXVK (DX9)",
-                color="#06b6d4",
-                detection_source="Spiele-Dateien (D3D9)",
-            )
-        elif has_bin_vulkan:
-            return GraphicsApiInfo(
-                layer="vulkan",
-                directx_versions=[],
-                label="Vulkan Native",
-                badge_text="Vulkan Native",
-                color="#10b981",
-                detection_source="Spiele-Dateien (Vulkan)",
-            )
-
-        # 3. Check PCGamingWiki Data
-        if pcgw_data and getattr(pcgw_data, "features", None):
-            d3d_ver = pcgw_data.features.get("Direct3D", "")
             if d3d_ver:
                 has_12 = "12" in d3d_ver
                 has_9_11 = any(v in d3d_ver for v in ("9", "10", "11"))
                 if has_12 and has_9_11:
-                    return GraphicsApiInfo(
+                    api_info = GraphicsApiInfo(
                         layer="hybrid",
                         directx_versions=["11", "12"],
                         label="Hybrid (DX11 DXVK & DX12 VKD3D)",
@@ -256,62 +204,272 @@ class GameOptimizer:
                         detection_source="PCGamingWiki",
                     )
                 elif has_12:
-                    return GraphicsApiInfo(
+                    api_info = GraphicsApiInfo(
                         layer="vkd3d",
                         directx_versions=["12"],
                         label="VKD3D (DirectX 12)",
                         badge_text="VKD3D (DX12)",
                         color="#a855f7",
-                        detection_source="PCGamingWiki",
+                        detection_source="PCGamingWiki (D3D12)",
                     )
                 elif "9" in d3d_ver:
-                    return GraphicsApiInfo(
+                    api_info = GraphicsApiInfo(
                         layer="dxvk",
                         directx_versions=["9"],
                         label="DXVK (DirectX 9)",
                         badge_text="DXVK (DX9)",
                         color="#06b6d4",
-                        detection_source="PCGamingWiki",
+                        detection_source="PCGamingWiki (D3D9)",
                     )
                 else:
-                    return GraphicsApiInfo(
+                    api_info = GraphicsApiInfo(
                         layer="dxvk",
                         directx_versions=["11"],
                         label="DXVK (DirectX 11)",
                         badge_text="DXVK (DX11)",
                         color="#38bdf8",
-                        detection_source="PCGamingWiki",
+                        detection_source="PCGamingWiki (D3D11)",
                     )
-
-            if pcgw_data.features.get("Vulkan"):
-                return GraphicsApiInfo(
+            elif vk_ver and vk_ver.lower() not in ("false", "no"):
+                api_info = GraphicsApiInfo(
                     layer="vulkan",
                     directx_versions=[],
                     label="Vulkan Native",
                     badge_text="Vulkan Native",
                     color="#10b981",
-                    detection_source="PCGamingWiki",
+                    detection_source="PCGamingWiki (Vulkan)",
                 )
 
-        # 4. Fallback heuristics: Retro -> DX9, Modern -> DXVK DX11
-        if cls._is_likely_retro_game(game):
-            return GraphicsApiInfo(
-                layer="dxvk",
-                directx_versions=["9"],
-                label="DXVK (DirectX 9 / Retro)",
-                badge_text="DXVK (DX9)",
-                color="#06b6d4",
-                detection_source="Retro-Erkennung",
-            )
+        # 3. Targeted Game Directory & Executable Inspection
+        if not api_info and game.install_dir and os.path.isdir(game.install_dir):
+            cand_names = {"bin", "bin64", "bin32", "bin_ship", "binaries", "win64", "win32", "x64", "x86", "retailclient", "game"}
+            cand_dirs = [game.install_dir]
+            try:
+                for entry in os.scandir(game.install_dir):
+                    if entry.is_dir():
+                        en = entry.name.lower()
+                        if en in cand_names:
+                            cand_dirs.append(entry.path)
+                        try:
+                            for sub in os.scandir(entry.path):
+                                if sub.is_dir():
+                                    sn = sub.name.lower()
+                                    if sn in cand_names:
+                                        cand_dirs.append(sub.path)
+                                    try:
+                                        for sub2 in os.scandir(sub.path):
+                                            if sub2.is_dir() and sub2.name.lower() in cand_names:
+                                                cand_dirs.append(sub2.path)
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+            except Exception:
+                pass
 
-        return GraphicsApiInfo(
-            layer="dxvk",
-            directx_versions=["11"],
-            label="DXVK (DirectX 11 / Standard)",
-            badge_text="DXVK (DX11)",
-            color="#38bdf8",
-            detection_source="Standard-Erkennung",
-        )
+            has_agility = False
+            has_fg = False
+            has_dxvk_cache = False
+            has_vulkan_file = False
+            has_ue5 = False
+            exe_candidates: List[Tuple[int, str]] = []
+
+            for d in cand_dirs:
+                if os.path.isdir(d):
+                    try:
+                        for f in os.listdir(d):
+                            fl = f.lower()
+                            if fl in ("d3d12core.dll", "d3d12sdklayers.dll"):
+                                has_agility = True
+                            elif fl in ("amd_fidelityfx_dx12.dll", "ffx_backend_dx12_x64.dll", "nvngx_dlssg.dll", "sl.dlss_g.dll"):
+                                has_fg = True
+                            elif fl.endswith(".dxvk-cache"):
+                                has_dxvk_cache = True
+                            elif fl in ("vulkan-1.dll", "libvulkan.so"):
+                                has_vulkan_file = True
+                            elif fl == "psoversion.txt" or "ue5" in fl:
+                                has_ue5 = True
+
+                            if fl.endswith(".exe") and not any(x in fl for x in ("crash", "report", "unins", "setup", "redist", "prereq", "installer", "update", "vcredist", "dxsetup", "cef", "epicwebhelper")):
+                                p = os.path.join(d, f)
+                                try:
+                                    sz = os.path.getsize(p)
+                                    if sz > 100_000:
+                                        exe_candidates.append((sz, p))
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+
+            # Agility SDK or Frame Generation DLLs are 100% DirectX 12
+            if has_agility or has_fg:
+                api_info = GraphicsApiInfo(
+                    layer="vkd3d",
+                    directx_versions=["12"],
+                    label="VKD3D (DirectX 12)",
+                    badge_text="VKD3D (DX12)",
+                    color="#a855f7",
+                    detection_source="Spiele-Dateien (Agility/FG)",
+                )
+
+            # Inspect primary game binary using fast memory-mapping
+            if not api_info and exe_candidates:
+                exe_candidates.sort(key=lambda x: x[0], reverse=True)
+                d3d12_root = False
+                d3d12_dev = False
+                d3d11_dev = False
+                d3d9_dev = False
+                vk_dev = False
+
+                for sz, p in exe_candidates[:2]:
+                    try:
+                        with open(p, "rb") as fp:
+                            with mmap.mmap(fp.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+                                if mm.find(b"D3D12SDKVersion") != -1 or mm.find(b"D3D12SerializeRootSignature") != -1:
+                                    d3d12_root = True
+                                if mm.find(b"D3D12CreateDevice") != -1:
+                                    d3d12_dev = True
+                                if mm.find(b"D3D11CreateDevice") != -1:
+                                    d3d11_dev = True
+                                if mm.find(b"Direct3DCreate9") != -1:
+                                    d3d9_dev = True
+                                if mm.find(b"vkCreateInstance") != -1:
+                                    vk_dev = True
+                    except Exception:
+                        pass
+
+                if d3d12_root:
+                    api_info = GraphicsApiInfo(
+                        layer="vkd3d",
+                        directx_versions=["12"],
+                        label="VKD3D (DirectX 12)",
+                        badge_text="VKD3D (DX12)",
+                        color="#a855f7",
+                        detection_source="Spiele-Executable (Agility SDK)",
+                    )
+                elif d3d12_dev and (d3d11_dev or d3d9_dev):
+                    if has_ue5:
+                        api_info = GraphicsApiInfo(
+                            layer="vkd3d",
+                            directx_versions=["12"],
+                            label="VKD3D (DirectX 12)",
+                            badge_text="VKD3D (DX12)",
+                            color="#a855f7",
+                            detection_source="Spiele-Dateien (UE5 Engine)",
+                        )
+                    else:
+                        api_info = GraphicsApiInfo(
+                            layer="hybrid",
+                            directx_versions=["11", "12"],
+                            label="Hybrid (DX11 DXVK & DX12 VKD3D)",
+                            badge_text="DX11/DX12 Hybrid",
+                            color="#f59e0b",
+                            detection_source="Spiele-Executable (D3D11/12)",
+                        )
+                elif d3d12_dev:
+                    api_info = GraphicsApiInfo(
+                        layer="vkd3d",
+                        directx_versions=["12"],
+                        label="VKD3D (DirectX 12)",
+                        badge_text="VKD3D (DX12)",
+                        color="#a855f7",
+                        detection_source="Spiele-Executable (D3D12)",
+                    )
+                elif d3d11_dev:
+                    api_info = GraphicsApiInfo(
+                        layer="dxvk",
+                        directx_versions=["11"],
+                        label="DXVK (DirectX 11)",
+                        badge_text="DXVK (DX11)",
+                        color="#38bdf8",
+                        detection_source="Spiele-Executable (D3D11)",
+                    )
+                elif d3d9_dev:
+                    api_info = GraphicsApiInfo(
+                        layer="dxvk",
+                        directx_versions=["9"],
+                        label="DXVK (DirectX 9)",
+                        badge_text="DXVK (DX9)",
+                        color="#06b6d4",
+                        detection_source="Spiele-Executable (D3D9)",
+                    )
+                elif vk_dev or has_vulkan_file:
+                    api_info = GraphicsApiInfo(
+                        layer="vulkan",
+                        directx_versions=[],
+                        label="Vulkan Native",
+                        badge_text="Vulkan Native",
+                        color="#10b981",
+                        detection_source="Spiele-Executable (Vulkan)",
+                    )
+
+            if not api_info and has_dxvk_cache:
+                api_info = GraphicsApiInfo(
+                    layer="dxvk",
+                    directx_versions=["11"],
+                    label="DXVK (DirectX 11)",
+                    badge_text="DXVK (DX11)",
+                    color="#38bdf8",
+                    detection_source="Spiele-Dateien (.dxvk-cache)",
+                )
+
+        # 4. Check Proton Prefix Runtime Logs if available
+        if not api_info:
+            prefix_paths = []
+            if getattr(game, "prefix_dir", None):
+                prefix_paths.append(Path(game.prefix_dir))
+            if game.app_id:
+                prefix_paths.extend([
+                    Path.home() / f".local/share/Steam/steamapps/compatdata/{game.app_id}/pfx",
+                    Path.home() / f".steam/steam/steamapps/compatdata/{game.app_id}/pfx",
+                ])
+                if game.install_dir:
+                    try:
+                        p = Path(game.install_dir)
+                        for parent in p.parents:
+                            if parent.name == "common" and parent.parent.name == "steamapps":
+                                prefix_paths.append(parent.parent / "compatdata" / game.app_id / "pfx")
+                                break
+                    except Exception:
+                        pass
+
+            for pfx in prefix_paths:
+                if pfx.is_dir():
+                    try:
+                        d12_log = pfx / "d3d12.log"
+                        d11_log = pfx / "d3d11.log"
+                        if d12_log.is_file() and d12_log.stat().st_size > 0:
+                            api_info = GraphicsApiInfo("vkd3d", ["12"], "VKD3D (DirectX 12)", "VKD3D (DX12)", "#a855f7", "Proton Prefix (d3d12.log)")
+                            break
+                        elif d11_log.is_file() and d11_log.stat().st_size > 0:
+                            api_info = GraphicsApiInfo("dxvk", ["11"], "DXVK (DirectX 11)", "DXVK (DX11)", "#38bdf8", "Proton Prefix (d3d11.log)")
+                            break
+                    except Exception:
+                        pass
+
+        # 5. Fallback heuristics: Retro -> DX9, Modern -> DXVK DX11
+        if not api_info:
+            if cls._is_likely_retro_game(game):
+                api_info = GraphicsApiInfo(
+                    layer="dxvk",
+                    directx_versions=["9"],
+                    label="DXVK (DirectX 9 / Retro)",
+                    badge_text="DXVK (DX9)",
+                    color="#06b6d4",
+                    detection_source="Retro-Erkennung",
+                )
+            else:
+                api_info = GraphicsApiInfo(
+                    layer="dxvk",
+                    directx_versions=["11"],
+                    label="DXVK (DirectX 11 / Standard)",
+                    badge_text="DXVK (DX11)",
+                    color="#38bdf8",
+                    detection_source="Standard-Erkennung",
+                )
+
+        cls._cached_api[cache_key] = api_info
+        return api_info
 
     @classmethod
     def detect_hardware(cls, force_refresh: bool = False) -> SystemHardwareInfo:
@@ -421,12 +579,13 @@ class GameOptimizer:
         pcgw_data: Optional[PCGWData] = None,
         hw: Optional[SystemHardwareInfo] = None,
         mode: str = "performance",  # "performance", "balanced", "handheld"
+        force_refresh: bool = False,
     ) -> OptimizationResult:
         """
         Creates an optimized LaunchConfig for the specified game and saves it to disk.
         """
         if hw is None:
-            hw = cls.detect_hardware()
+            hw = cls.detect_hardware(force_refresh=force_refresh)
 
         applied_tweaks: List[str] = []
         config = LaunchConfig()
@@ -449,7 +608,7 @@ class GameOptimizer:
             applied_tweaks.append("🔋 Prime-Run aktiv (Dedizierte NVIDIA GPU)")
 
         # 2. Graphics API (DXVK vs VKD3D) & GPU-Specific Optimization
-        api_info = cls.detect_graphics_api(game, pcgw_data)
+        api_info = cls.detect_graphics_api(game, pcgw_data, force_refresh=force_refresh)
 
         if hw.is_steam_deck or mode == "handheld":
             config.preset = "handheld_battery"
@@ -458,10 +617,6 @@ class GameOptimizer:
 
         elif api_info.layer == "vkd3d":
             applied_tweaks.append(f"🟣 Grafik-API erkannt: {api_info.label} ({api_info.detection_source})")
-            config.env_vars["VKD3D_CONFIG"] = "dxr11,dxr"
-            config.env_vars["DXVK_ASYNC"] = "0"
-            applied_tweaks.append("🎮 VKD3D DirectX 12 DXR freigeschaltet (VKD3D_CONFIG=dxr11,dxr)")
-
             if hw.gpu_vendor == "nvidia":
                 config.preset = "nvidia_rtx"
                 LaunchOptionBuilder.apply_preset(config, "nvidia_rtx")
@@ -476,12 +631,13 @@ class GameOptimizer:
                 config.preset = "max_performance" if mode == "performance" else "balanced"
                 LaunchOptionBuilder.apply_preset(config, config.preset)
 
+            config.env_vars["VKD3D_CONFIG"] = "dxr11,dxr"
+            config.env_vars["DXVK_ASYNC"] = "0"
+            config.env_vars["WINE_FULLSCREEN_FSR"] = "0"
+            applied_tweaks.append("🎮 VKD3D DirectX 12 DXR freigeschaltet (VKD3D_CONFIG=dxr11,dxr)")
+
         elif api_info.layer == "dxvk":
             applied_tweaks.append(f"🔷 Grafik-API erkannt: {api_info.label} ({api_info.detection_source})")
-            config.env_vars["DXVK_ASYNC"] = "1"
-            config.env_vars["VKD3D_CONFIG"] = ""
-            applied_tweaks.append("⚡ DXVK Async Shader-Kompilierung aktiviert (DXVK_ASYNC=1)")
-
             if hw.gpu_vendor == "amd":
                 config.preset = "amd_radeon"
                 LaunchOptionBuilder.apply_preset(config, "amd_radeon")
@@ -499,12 +655,12 @@ class GameOptimizer:
                 config.preset = "max_performance" if mode == "performance" else "balanced"
                 LaunchOptionBuilder.apply_preset(config, config.preset)
 
+            config.env_vars["DXVK_ASYNC"] = "1"
+            config.env_vars["VKD3D_CONFIG"] = ""
+            applied_tweaks.append("⚡ DXVK Async Shader-Kompilierung aktiviert (DXVK_ASYNC=1)")
+
         elif api_info.layer == "hybrid":
             applied_tweaks.append(f"🔶 Grafik-API erkannt: {api_info.label} ({api_info.detection_source})")
-            config.env_vars["DXVK_ASYNC"] = "1"
-            config.env_vars["VKD3D_CONFIG"] = "dxr11,dxr"
-            applied_tweaks.append("⚡ DXVK Async & VKD3D DXR aktiviert für Hybrid DX11/DX12")
-
             if hw.gpu_vendor == "amd":
                 config.preset = "amd_radeon"
                 LaunchOptionBuilder.apply_preset(config, "amd_radeon")
@@ -519,12 +675,17 @@ class GameOptimizer:
                 config.preset = "max_performance" if mode == "performance" else "balanced"
                 LaunchOptionBuilder.apply_preset(config, config.preset)
 
+            config.env_vars["DXVK_ASYNC"] = "1"
+            config.env_vars["VKD3D_CONFIG"] = "dxr11,dxr"
+            applied_tweaks.append("⚡ DXVK Async & VKD3D DXR aktiviert für Hybrid DX11/DX12")
+
         elif api_info.layer == "vulkan":
             applied_tweaks.append(f"🟢 Grafik-API erkannt: {api_info.label} (Native Vulkan-Engine)")
             config.preset = "max_performance" if mode == "performance" else "balanced"
             LaunchOptionBuilder.apply_preset(config, config.preset)
             config.env_vars["DXVK_ASYNC"] = "0"
             config.env_vars["VKD3D_CONFIG"] = ""
+            config.env_vars["WINE_FULLSCREEN_FSR"] = "0"
 
         else:
             config.preset = "max_performance" if mode == "performance" else "balanced"

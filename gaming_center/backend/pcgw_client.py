@@ -108,8 +108,9 @@ class PCGWClient:
             try:
                 with open(cache_path, "r", encoding="utf-8") as f:
                     cached_dict = json.load(f)
-                    # Only use cache if it was created with download link support
-                    if "downloads" in cached_dict:
+                    # Only use cache if it was created with download link support and cache_version >= 2
+                    if "downloads" in cached_dict and cached_dict.get("cache_version", 1) >= 2:
+                        cached_dict.pop("cache_version", None)
                         cached_downloads = [PCGWDownload(**dl) for dl in cached_dict.pop("downloads", [])]
                         fixes_raw = cached_dict.pop("fixes", [])
                         fixes = []
@@ -125,21 +126,24 @@ class PCGWClient:
             "action": "parse",
             "page": page_title,
             "prop": "wikitext|sections",
+            "redirects": "1",
         }
         res = self._request_json(params)
         if not res or "parse" not in res:
             return None
 
         parse_obj = res["parse"]
+        real_title = parse_obj.get("title", page_title)
         wikitext = parse_obj.get("wikitext", {}).get("*", "")
-        pcgw_url = f"https://www.pcgamingwiki.com/wiki/{urllib.parse.quote(page_title.replace(' ', '_'))}"
+        pcgw_url = f"https://www.pcgamingwiki.com/wiki/{urllib.parse.quote(real_title.replace(' ', '_'))}"
 
         # 3. Parse wikitext
-        data = self._parse_wikitext(page_title, pcgw_url, wikitext)
+        data = self._parse_wikitext(real_title, pcgw_url, wikitext)
 
         # 4. Save to cache
         try:
             cache_obj = {
+                "cache_version": 2,
                 "page_title": data.page_title,
                 "pcgw_url": data.pcgw_url,
                 "steam_appid": data.steam_appid,
