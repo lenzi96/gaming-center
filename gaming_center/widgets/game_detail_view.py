@@ -31,6 +31,7 @@ from ..backend.path_resolver import PathResolver, ResolvedPath
 from ..backend.savegame_manager import SavegameManager, BackupInfo
 from ..backend.launch_builder import LaunchOptionBuilder, LaunchConfig, PRESET_DEFINITIONS
 from ..backend.translator import Translator
+from ..backend.optimizer import GameOptimizer, SystemHardwareInfo
 from .download_dialog import DownloadDialog
 from ..style.theme import ThemeColors
 
@@ -148,6 +149,26 @@ class GameDetailView(QWidget):
         self.back_btn.clicked.connect(self.back_clicked.emit)
         top_row.addWidget(self.back_btn)
         top_row.addStretch()
+
+        self.auto_opt_btn = QPushButton("⚡ Auto-Optimierung")
+        self.auto_opt_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.auto_opt_btn.setToolTip("Hardware & Spiel automatisch analysieren und beste Startoptionen setzen")
+        self.auto_opt_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {ThemeColors.ACCENT_GREEN}, stop:1 #00b07c);
+                color: #04100c;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: 800;
+                font-size: 13px;
+                border: none;
+            }}
+            QPushButton:hover {{
+                background: #00f0a8;
+            }}
+        """)
+        self.auto_opt_btn.clicked.connect(self._auto_optimize_current_game)
+        top_row.addWidget(self.auto_opt_btn)
 
         self.launch_btn = QPushButton("▶️  Spiel starten")
         self.launch_btn.setProperty("class", "primary-btn")
@@ -951,6 +972,57 @@ class GameDetailView(QWidget):
 
         self._is_updating_ui = False
 
+        # --- 0. Auto-Optimization Quick Action Card ---
+        auto_card = QFrame()
+        auto_card.setStyleSheet(f"""
+            QFrame {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #101c26, stop:1 #0f272a);
+                border: 1px solid rgba(0, 212, 148, 0.4);
+                border-radius: 8px;
+                padding: 12px 14px;
+            }}
+        """)
+        ac_layout = QHBoxLayout(auto_card)
+        ac_layout.setSpacing(14)
+
+        ac_info = QVBoxLayout()
+        ac_info.setSpacing(3)
+        ac_title = QLabel("🪄 Intelligente Hardware- & Spiel-Auto-Optimierung")
+        ac_title.setStyleSheet(f"font-size: 13px; font-weight: 800; color: {ThemeColors.ACCENT_GREEN};")
+        hw_info = GameOptimizer.detect_hardware()
+        gpu_disp = hw_info.gpu_name[:32] + "..." if len(hw_info.gpu_name) > 35 else hw_info.gpu_name
+        cpu_disp = hw_info.cpu_name[:32] + "..." if len(hw_info.cpu_name) > 35 else hw_info.cpu_name
+        ac_desc = QLabel(
+            f"Erkannt: 🎮 {hw_info.vendor_display} ({gpu_disp}) • ⚡ {cpu_disp}\n"
+            "Konfiguriert mit einem Klick die optimalen Flags (DXVK Async, GPU-Tuning, GameMode, Wiki-Fixes)."
+        )
+        ac_desc.setStyleSheet(f"font-size: 11px; color: {ThemeColors.TEXT_SECONDARY};")
+        ac_desc.setWordWrap(True)
+        ac_info.addWidget(ac_title)
+        ac_info.addWidget(ac_desc)
+        ac_layout.addLayout(ac_info, stretch=1)
+
+        btn_auto_tune = QPushButton("⚡ Jetzt automatisch optimieren")
+        btn_auto_tune.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_auto_tune.setStyleSheet(f"""
+            QPushButton {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {ThemeColors.ACCENT_GREEN}, stop:1 #00b07c);
+                color: #04100c;
+                font-weight: 800;
+                font-size: 12px;
+                padding: 9px 18px;
+                border-radius: 6px;
+                border: none;
+            }}
+            QPushButton:hover {{
+                background: #00f0a8;
+            }}
+        """)
+        btn_auto_tune.clicked.connect(self._auto_optimize_current_game)
+        ac_layout.addWidget(btn_auto_tune)
+
+        layout.addWidget(auto_card)
+
         # --- 1. Quick Presets Card ---
         preset_box = QFrame()
         preset_box.setStyleSheet(f"background-color: {ThemeColors.BG_CARD}; border: 1px solid {ThemeColors.BORDER_CARD}; border-radius: 8px; padding: 12px;")
@@ -1543,6 +1615,27 @@ class GameDetailView(QWidget):
         self._sync_ui_from_config()
         self._is_updating_ui = False
         self._update_launch_preview()
+
+    def _auto_optimize_current_game(self):
+        if not self.game:
+            return
+        res = GameOptimizer.optimize_game(self.game, pcgw_data=self.pcgw_data)
+        self._is_updating_ui = True
+        self.launch_config = res.config
+        self._sync_ui_from_config()
+        self._is_updating_ui = False
+        self._update_launch_preview()
+
+        tweaks_str = "\n".join(f"• {t}" for t in res.applied_tweaks)
+        hw = GameOptimizer.detect_hardware()
+        QMessageBox.information(
+            self,
+            "Auto-Optimierung erfolgreich",
+            f"🎉 {self.game.name} wurde erfolgreich automatisch optimiert!\n\n"
+            f"Erkanntes System:\n• GPU: {hw.vendor_display} ({hw.gpu_name})\n• CPU: {hw.cpu_name}\n\n"
+            f"Angewendete Optimierungen:\n{tweaks_str}\n\n"
+            f"Das Profil wurde dauerhaft in ~/.config/gaming-center/profiles/ gespeichert und ist sofort aktiv.",
+        )
 
     def _copy_launch_command(self):
         cmd = self.preview_box.text()

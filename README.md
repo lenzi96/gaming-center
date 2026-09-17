@@ -27,6 +27,10 @@ Ein modernes Linux-Spiele-Service-Center mit **PCGamingWiki**-Live-Anbindung, na
   - Flags für **NVIDIA DLSS / Raytracing** (`PROTON_ENABLE_NVAPI=1`), **DXVK Async**, ESync-Workarounds.
   - Übernimmt empfohlene Startparameter aus dem PCGW-Wiki.
   - Generiert den fertigen Startbefehl für Steam auf Knopfdruck.
+- **⚡ 1-Klick Hardware- & Spiele-Auto-Optimierung**:
+  - Automatische Erkennung deiner GPU (AMD Radeon RX, NVIDIA GeForce RTX, Intel Arc), CPU und Tools.
+  - Konfiguriert sofort die optimalen Treiber- und Proton-Parameter (RADV GPL, DXVK Async, DLSS, Large Address Aware).
+  - Verfügbar als 1-Klick-Button in der Detailansicht sowie als Bibliotheks-Batch-Optimierer für alle installierten Spiele.
 
 - **⬇️ Community Patches & Fixes Downloader**:
   - Extrahiert Community-Patches und Mod-Tools direkt aus PCGamingWiki Artikeln (z. B. *Cyber Engine Tweaks*, *DSfix*, *SilentPatch*, *Ultimate-ASI-Loader*).

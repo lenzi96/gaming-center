@@ -27,6 +27,7 @@ from .widgets.game_card import GameCard
 from .widgets.game_detail_view import GameDetailView
 from .widgets.flow_layout import FlowLayout
 from .widgets.update_dialog import UpdateDialog
+from .widgets.auto_optimize_dialog import AutoOptimizeDialog
 from .style.theme import ThemeColors, APP_STYLESHEET
 
 
@@ -111,6 +112,28 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(self.sort_combo)
 
         top_layout.addStretch()
+
+        # Auto-Optimize button
+        self.btn_auto_opt = QPushButton("⚡ Auto-Optimierung")
+        self.btn_auto_opt.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_auto_opt.setToolTip("Hardware & Spiele automatisch analysieren und mit 1-Klick optimieren")
+        self.btn_auto_opt.setStyleSheet(f"""
+            QPushButton {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 rgba(0, 212, 148, 0.18), stop:1 rgba(0, 210, 255, 0.18));
+                border: 1px solid {ThemeColors.ACCENT_GREEN};
+                color: #ffffff;
+                border-radius: 6px;
+                padding: 7px 14px;
+                font-size: 12px;
+                font-weight: 700;
+            }}
+            QPushButton:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {ThemeColors.ACCENT_GREEN}, stop:1 {ThemeColors.ACCENT_CYAN});
+                color: #04100c;
+            }}
+        """)
+        self.btn_auto_opt.clicked.connect(self.show_auto_optimize_dialog)
+        top_layout.addWidget(self.btn_auto_opt)
 
         # Refresh button
         self.refresh_btn = QPushButton("🔄 Neu laden")
@@ -274,6 +297,12 @@ class MainWindow(QMainWindow):
         dlg = UpdateDialog(self)
         dlg.exec()
         self._reset_updater_btn_style()
+
+    def show_auto_optimize_dialog(self):
+        dlg = AutoOptimizeDialog(self.all_games, self.pcgw_client, self)
+        dlg.exec()
+        if dlg.results:
+            self.status_label.setText(f"{len(dlg.results)} Spiele wurden erfolgreich auto-optimiert.")
 
     def start_background_update_check(self, force: bool = False):
         """Silently checks for updates in the background without modal dialogs."""

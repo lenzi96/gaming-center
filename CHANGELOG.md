@@ -2,6 +2,26 @@
 
 Alle nennenswerten Änderungen an diesem Projekt werden in dieser Datei dokumentiert.
 
+## [v1.2.0] - 2026-09-17
+
+### Hinzugefügt
+- **Hardware- & Spiele-Auto-Optimierung (1-Klick)**:
+  - Intelligente Hardware-Erkennung (`GameOptimizer`): Ermittelt automatisch GPU (AMD Radeon, NVIDIA GeForce, Intel Arc), CPU-Kerne, Handheld-Modus (Steam Deck) sowie Gaming-Tools (`gamemoderun`, `mangohud`, `gamescope`, `prime-run`).
+  - GPU-spezifische Profile:
+    - **AMD Radeon**: Automatische Aktivierung von RADV GPL Shader Pipeline (`RADV_PERFTEST=gpl`), DXVK Async (`DXVK_ASYNC=1`) und FSR Upscaling (`WINE_FULLSCREEN_FSR=1`).
+    - **NVIDIA GeForce**: Freischaltung von NVIDIA NVAPI für DLSS/Reflex (`PROTON_ENABLE_NVAPI=1`), DirectX 12 Raytracing (`VKD3D_CONFIG=dxr11,dxr`) und DXVK Async.
+    - **Intel / Standard**: DXVK Async und ausgewogene Performance-Profile.
+  - Retro- & 32-Bit Heuristiken: Schutz vor Speicherabstürzen durch automatische Aktivierung von Large Address Aware (`PROTON_FORCE_LARGE_ADDRESS_AWARE=1`) für ältere Klassiker.
+  - PCGamingWiki Parameter-Extraktion: Übernahme empfohlener Startflags (z. B. `-novid`, `-skipintro`).
+  - **Spiele-Detailansicht**:
+    - Prominenter **„⚡ Auto-Optimierung“** Button direkt in der oberen Aktionsleiste neben „▶️ Spiel starten“.
+    - Interaktive **Auto-Optimierungs-Aktionskarte** mit System-Info im Reiter „🚀 Startoptionen & Tuning“.
+  - **Bibliotheks-Übersicht**:
+    - Neuer Button **„⚡ Auto-Optimierung“** in der Haupt-Navigationsleiste.
+    - Neuer Batch-Optimierungs-Dialog (`AutoOptimizeDialog`) zur gleichzeitigen Optimierung der gesamten Spiele-Bibliothek mit Profilauswahl (Performance, Ausgewogen, Handheld) und Fortschrittsanzeige.
+
+---
+
 ## [v1.1.0] - 2026-09-16
 
 ### Hinzugefügt
